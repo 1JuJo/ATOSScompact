@@ -149,7 +149,7 @@ def update(refresh):
                     continue
                 elif prev_element_text == "Arbeitszeitkonto":
                     prev_element_text = "🌙"
-                    üs = text+" ("+ add_times(subtract_times(arbeitszeit, "7:42"),text)+")" if datetime.strptime(arbeitszeit, "%H:%M") < datetime.strptime("7:42", "%H:%M") else add_times(subtract_times(arbeitszeit, "7:42"),text)
+                    üs = text+" ("+ add_times(subtract_times(arbeitszeit, "7:42"),text)+")" if datetime.strptime(arbeitszeit, "%H:%M") < datetime.strptime("7:42", "%H:%M") else add_times(subtract_times(arbeitszeit, "7:42"),text)+" +" + subtract_times(arbeitszeit, "7:42")
                     my_list.append(f"{prev_element_text} {üs}")
                     continue
                 elif prev_element_text == "AZK_Auszahlung":
