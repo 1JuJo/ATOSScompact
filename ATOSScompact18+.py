@@ -1,5 +1,8 @@
+#do to
+#TimeoutException wenn des element nicht gefunden wird bitte irgendwann fix (bei allen elementen)
+
 from selenium import webdriver
-from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException
+from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
@@ -77,7 +80,26 @@ def reload():
         alert.accept()
     except NoAlertPresentException:
         pass
-
+def enterFrame():
+    WebDriverWait(driver, 50).until(
+        EC.presence_of_element_located((By.ID, "applicationIframe"))
+    )
+    try:
+        iframe = driver.find_element(By.TAG_NAME, 'iframe')
+        driver.switch_to.frame(iframe)
+    except (NoSuchElementException, TimeoutException, UnexpectedAlertPresentException):
+        reload()
+        enterFrame()
+def enterFrame():
+    WebDriverWait(driver, 50).until(
+        EC.presence_of_element_located((By.ID, "applicationIframe"))
+    )
+    try:
+        iframe = driver.find_element(By.TAG_NAME, 'iframe')
+        driver.switch_to.frame(iframe)
+    except (NoSuchElementException, TimeoutException, UnexpectedAlertPresentException):
+        reload()
+        enterFrame()
 
 def update(refresh):
     global window,loaded,amstempeln,stempelupdate,az,noupdate,timesincereload
@@ -92,13 +114,8 @@ def update(refresh):
             alert.accept()
         except NoAlertPresentException:
             pass
-    try:
-        iframe = driver.find_element(By.TAG_NAME, 'iframe')
-        driver.switch_to.frame(iframe)
-    except NoSuchElementException:
-        reload()
-        iframe = driver.find_element(By.TAG_NAME, 'iframe')
-        driver.switch_to.frame(iframe)
+    #switch to IFrame
+    enterFrame()
     
 
     # Function Variable cration
@@ -198,13 +215,7 @@ def stempeln(Pause):
         reload()
     stempelState = window.circle.color.name() == "#00ff00"
     # Switch to the iframe
-    try:
-        iframe = driver.find_element(By.TAG_NAME, 'iframe')
-        driver.switch_to.frame(iframe)
-    except NoSuchElementException:
-        reload()
-        iframe = driver.find_element(By.TAG_NAME, 'iframe')
-        driver.switch_to.frame(iframe)
+    enterFrame()
     # Loop trough the elements to "Stempel"
     try:
         # Wait for button to be active
@@ -237,6 +248,8 @@ def stempeln(Pause):
                     window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
                 driver.switch_to.default_content()
                 break
+    except TimeoutException:
+        stempeln(Pause)
     finally:
         stempelupdate = True
         window.update_list(True)
