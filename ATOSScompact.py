@@ -41,14 +41,6 @@ chrome_options = Options()
 chrome_options.add_argument("--user-data-dir=selenium")  # Path to your chrome profile
 chrome_options.add_argument("--headless")  # Run in headless mode
 
-# Setup WebDriver
-driver = None
-while driver is None:
-    try:
-        s = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=s, options=chrome_options)
-    except WebDriverException:
-        pass  
 #driver.set_network_conditions(
 #    offline=False,
 #    latency=5,  # additional latency (ms)
@@ -61,10 +53,6 @@ stempelupdate = False
 loaded = False
 az = "9:99"
 noupdate= False
-# Open the website
-driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
-WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
-timesincereload = time.time()
 
 #wait for userlogin
 #time.sleep(60)
@@ -290,8 +278,6 @@ def add_times(time1, time2):
 
     return formatted_time
 
-from datetime import datetime, timedelta
-
 def subtract_times(time1, time2):
     # Check if the times are negative
     negative1 = time1.startswith("-")
@@ -504,13 +490,79 @@ def start_keyboard_listener():
 listener_thread = threading.Thread(target=start_keyboard_listener)
 listener_thread.start()
 
+class WindowThread(threading.Thread):
+    def __init__(self, *args, **kwargs):
+        super(WindowThread, self).__init__(*args, **kwargs)
+        self.initwindow = None
+        self.label = None
+
+    def run(self):
+
+        # Create the application object
+        initapp = QApplication(sys.argv)
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(19, 19, 19))
+        palette.setColor(QPalette.WindowText, Qt.red)
+        initapp.setPalette(palette)
+
+        # Create the main initwindow
+        self.initwindow = QWidget()
+        self.initwindow.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint)
+
+        # Set the layout and label
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
+        layout.setSpacing(0)  # Remove spacing
+        self.label = QLabel("Das Programm wird gestartet")
+        layout.addWidget(self.label)
+        self.initwindow.setLayout(layout)
+
+        # Set initwindow size and display the initwindow
+        screen = initapp.primaryScreen()
+        size = screen.size()
+        height = int(size.height()/48)
+        self.initwindow.setGeometry(int(size.width()/19.2), screen.geometry().topLeft().y(), height, height)
+        self.initwindow.show()
+
+        # Execute the application
+        sys.exit(initapp.exec_())
+
+    def close(self):
+        if self.initwindow is not None:
+            self.initwindow.close()
+    def failed(self):
+        self.label.setText("Start nicht möglich versuche es erneut!")
+        time.sleep(10)
+        if self.initwindow is not None:
+            self.initwindow.close()
+
+t = WindowThread()
+t.start()
+
+# Setup WebDriver
+driver = None
+while driver is None:
+    try:
+        s = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=s, options=chrome_options)
+    except WebDriverException:
+        pass  
+# Open the website
+driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
+WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+timesincereload = time.time()
+
+
 window = None
 screen = None
 def main():
-    global loaded, window, screen
+    global loaded, window, screen,t
     stuff = update(False)
     if stuff[2]:  # If the data is valid
         loaded = True
+        t.close()
+        # Wait for the window thread to finish
+        t.join()
         initial_state = stuff[0]
         my_list = stuff[1]
         app = QApplication(sys.argv)
@@ -537,6 +589,9 @@ def main():
         window.show()
         sys.exit(app.exec_())
     else:
+        t.failed()
+        t.join()
+
         print("failed to initialize")
 
 if __name__ == "__main__":
