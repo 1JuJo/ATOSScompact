@@ -133,12 +133,12 @@ def update(refresh):
             if match:
                 if prev_element_text == "Heutige Anwesenheit":
                     arbeitszeit = match.group()
-                    prev_element_text = "AZ"
+                    prev_element_text = "⏱"
                 elif prev_element_text == "Heutige Pause":
-                    prev_element_text = "P"
+                    prev_element_text = "🚫"
                     pause = match.group()
                 elif prev_element_text == "Kommen":
-                    prev_element_text = "K"
+                    prev_element_text = "🕗"
                     kommen = match.group()
                 elif prev_element_text == "Gehen":
                     my_list.append(f"Weg seit {match.group()} ({subtract_times(datetime.now().strftime('%H:%M'), match.group())} / {add_times(subtract_times(datetime.now().strftime('%H:%M'), match.group()), pause)}) ")
@@ -149,11 +149,11 @@ def update(refresh):
                         current_time = add_times(add_times(arbeitszeit, kommen), pause)
                         pause2 = "0:45" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:45", "%H:%M") else pause
                         pause3 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
-                        my_list.append(f"G : {add_times(add_times(kommen, '6:00'), pause)}/{add_times(add_times(kommen, '7:42'), pause3)}")
-                        my_list.append(f"G in h : {subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time)}/{subtract_times(add_times(add_times(kommen, '7:42'), pause3), current_time)}")
+                        my_list.append(f"👣 : {add_times(add_times(kommen, '6:00'), pause)}/{add_times(add_times(kommen, '7:42'), pause3)}")
+                        my_list.append(f"👣 in h : {subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time)}/{subtract_times(add_times(add_times(kommen, '7:42'), pause3), current_time)}")
                     continue
                 elif prev_element_text == "Arbeitszeitkonto":
-                    prev_element_text = "ÜS"
+                    prev_element_text = "💰"
                     üs = text+" ("+ add_times(subtract_times(arbeitszeit, "7:42"),text)+")" if datetime.strptime(arbeitszeit, "%H:%M") < datetime.strptime("7:42", "%H:%M") else add_times(subtract_times(arbeitszeit, "7:42"),text)+" +" + subtract_times(arbeitszeit, "7:42")
                     my_list.append(f"{prev_element_text} : {üs}")
                     continue
