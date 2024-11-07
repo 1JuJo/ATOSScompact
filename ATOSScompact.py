@@ -1,8 +1,9 @@
 #do to
 #TimeoutException wenn des element nicht gefunden wird bitte irgendwann fix (bei allen elementen)
+#mach dass ein haken da ist wenn die zeit abgehakt ist und nicht mehr minus(beipsiel ich hab 6:10 AZ dann soll keine -00:10 da stehen sondern ein haken)sollte grün doder so sein
 
 from selenium import webdriver
-from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException
+from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException,StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
@@ -14,12 +15,15 @@ from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplicatio
 from PyQt5.QtCore import Qt, QTimer, QPoint, QTime
 from datetime import datetime, timedelta
 from pynput import keyboard
+import psutil
 import threading
 import re
 import time
 import sys
 import random
 import socket
+
+debug = False
 
 #wait for internet connection
 def is_connected():
@@ -36,10 +40,6 @@ def is_connected():
 #    else:
 #        time.sleep(0.1)
 
-# Setup Chrome options
-chrome_options = Options()
-chrome_options.add_argument("--user-data-dir=selenium")  # Path to your chrome profile
-chrome_options.add_argument("--headless")  # Run in headless mode
 
 #driver.set_network_conditions(
 #    offline=False,
@@ -53,9 +53,7 @@ stempelupdate = False
 loaded = False
 az = "9:99"
 noupdate= False
-
-#wait for userlogin
-#time.sleep(60)
+initialized = False
 
 def reload():
     global timesincereload,window
@@ -69,15 +67,47 @@ def reload():
     except NoAlertPresentException:
         pass
 def enterFrame():
-    WebDriverWait(driver, 50).until(
-        EC.presence_of_element_located((By.ID, "applicationIframe"))
-    )
+    class any_of_conditions(object):
+        def __init__(self, *conditions):
+            self.conditions = conditions
+
+        def __call__(self, driver):
+            for condition in self.conditions:
+                try:
+                    if condition(driver):
+                        return True
+                except:
+                    pass
+            return False
+
+    # Define your conditions
+    condition1 = EC.presence_of_element_located((By.ID, "applicationIframe"))
+    condition2 = lambda driver: 'neterror' in driver.find_element(By.TAG_NAME, 'body').get_attribute('class')
+
+    # Wait for any of the conditions to be true
     try:
+        WebDriverWait(driver, 50).until(any_of_conditions(condition1, condition2))
+    except TimeoutException:
+        t.failed()
+        t.join()
+        init()
+        main()
+
+        # Get the body element
+    body = driver.find_element(By.TAG_NAME, 'body')
+
+
+
+    try:
+        # Check if the body has the class "neterror"
+        if 'neterror' in body.get_attribute('class').split():
+            return False
         iframe = driver.find_element(By.TAG_NAME, 'iframe')
         driver.switch_to.frame(iframe)
+        return True
     except (NoSuchElementException, TimeoutException, UnexpectedAlertPresentException):
         reload()
-        enterFrame()
+        return enterFrame()
 
 def update(refresh):
     global window,loaded,amstempeln,stempelupdate,az,noupdate,timesincereload
@@ -94,7 +124,9 @@ def update(refresh):
             pass
 
     #switch to IFrame
-    enterFrame()
+
+    if not enterFrame():
+        return [None ,[],False]
     
 
     # Function Variable cration
@@ -206,6 +238,9 @@ def stempeln(Pause):
                 WebDriverWait(driver, 10).until(
                     EC.element_to_be_clickable((By.CSS_SELECTOR, ".action-item"))
                 )
+                WebDriverWait(driver, 30).until(
+                    lambda d: not element.get_attribute("disabled") == "disabled"
+                )
                 element.click()
                 break
         WebDriverWait(driver, 10).until(
@@ -227,16 +262,13 @@ def stempeln(Pause):
                     window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
                 driver.switch_to.default_content()
                 break
-    except TimeoutException:
+    except (TimeoutException,StaleElementReferenceException):
         stempeln(Pause)
     finally:
         stempelupdate = True
         window.update_list(True)
         amstempeln = False
         stempelupdate = False
-
-
-from datetime import datetime, timedelta
 
 def add_times(time1, time2):
     # Check if the times are negative
@@ -457,22 +489,23 @@ current_keys = set()
 last_time_pressed = 0
 
 def on_press(key):
-    global last_time_pressed, stempeln, loaded
+    global last_time_pressed, stempeln, loaded,initialized
     if key in COMBINATION1 or key in COMBINATION2:
         current_keys.add(key)
 
     # Check if 5 seconds have passed since the last time a combination was pressed
     if time.time() - last_time_pressed > 5:
         if COMBINATION1.issubset(current_keys):
-            if loaded == False or amstempeln == True:
-                while loaded == False or amstempeln == True:
+            if loaded == False or initialized == False or amstempeln == True:
+                while loaded == False or initialized == False or amstempeln == True:
                     time.sleep(0.1)
             stempeln(True)
             last_time_pressed = time.time()
         elif COMBINATION2.issubset(current_keys):
-            if loaded == False or amstempeln == True:
-                while loaded == False or amstempeln == True:
+            if loaded == False or initialized == False or amstempeln == True:
+                while loaded == False or initialized == False or amstempeln == True:
                     time.sleep(0.1)
+            print("attempting to stempel")
             stempeln(False)
             last_time_pressed = time.time()
 
@@ -531,68 +564,114 @@ class WindowThread(threading.Thread):
         if self.initwindow is not None:
             self.initwindow.close()
     def failed(self):
-        self.label.setText("Start nicht möglich versuche es erneut!")
-        time.sleep(10)
+        try:
+            self.label.setText("Start nicht möglich versuche es erneut!")
+        except RuntimeError as e:
+            print(f"Es ist ein Fehler aufgetreten prgramm startet möglicherweise nicht neu: {e}")
+        time.sleep(1)
         if self.initwindow is not None:
             self.initwindow.close()
-
-t = WindowThread()
-t.start()
-
-# Setup WebDriver
+t = None
+def init():
+    global t
+    t = WindowThread()
+    t.start()
+init()
 driver = None
-while driver is None:
-    try:
-        s = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=s, options=chrome_options)
-    except WebDriverException:
-        pass  
-# Open the website
-driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
-WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
-timesincereload = time.time()
 
+def wait_for_process(process_name):
+    while True:
+        for proc in psutil.process_iter(['name']):
+            if proc.info['name'] == process_name:
+                print(f"{process_name} is running.")
+                return
+        time.sleep(0.1)
+wait_for_process("ZSTray")
 
 window = None
 screen = None
+scripttime = 0
+while time.time()- psutil.boot_time() < 150 and scripttime < 3:
+    time.sleep(1)
+    scripttime += 1
+    print(scripttime)
+
 def main():
-    global loaded, window, screen,t
-    stuff = update(False)
-    if stuff[2]:  # If the data is valid
-        loaded = True
-        t.close()
-        # Wait for the window thread to finish
-        t.join()
-        initial_state = stuff[0]
-        my_list = stuff[1]
-        app = QApplication(sys.argv)
+    global  window, screen,t,timesincereload,driver,debug,initialized
 
-        # Set the palette to a dark theme
-        palette = QPalette()
-        palette.setColor(QPalette.Window, QColor(19, 19, 19))
-        palette.setColor(QPalette.WindowText, Qt.white)
-        palette.setColor(QPalette.Base, QColor(25, 25, 25))
-        palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
-        palette.setColor(QPalette.ToolTipBase, Qt.white)
-        palette.setColor(QPalette.ToolTipText, Qt.white)
-        palette.setColor(QPalette.Text, Qt.white)
-        palette.setColor(QPalette.Button, QColor(53, 53, 53))
-        palette.setColor(QPalette.ButtonText, Qt.white)
-        palette.setColor(QPalette.BrightText, Qt.red)
-        palette.setColor(QPalette.Link, QColor(42, 130, 218))
-        palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
-        palette.setColor(QPalette.HighlightedText, Qt.black)
-        app.setPalette(palette)
-        screen = app.primaryScreen()
+    # Setup Chrome options
+    chrome_options = Options()
+    chrome_options.add_argument("--user-data-dir=selenium")  # Path to your chrome profile
+    if not debug:
+        chrome_options.add_argument("--headless")  # Run in headless mode
 
-        window = Window(initial_state, my_list)
-        window.show()
-        sys.exit(app.exec_())
-    else:
+    # Setup WebDriver
+    while driver is None:
+        try:
+            s = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=s, options=chrome_options)
+        except WebDriverException:
+            pass  
+
+    # Open the website
+    driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
+    WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+
+    #wait for userlogin
+    #time.sleep(60)
+
+    # Get the body element
+    body = driver.find_element(By.TAG_NAME, 'body')
+
+    # Check if the body has the class "neterror"
+    if 'neterror' in body.get_attribute('class').split():
         t.failed()
         t.join()
+        #print("failed to initialize")
+        init()
+        main()
+    else:
+        timesincereload = time.time()
+        stuff = update(False)
+        if stuff[2]:  # If the data is valid
+            t.close()
+            
+            # Wait for the window thread to finish
+            t.join()
+            initial_state = stuff[0]
+            my_list = stuff[1]
+            app = QApplication(sys.argv)
 
-        print("failed to initialize")
+            # Set the palette to a dark theme
+            palette = QPalette()
+            palette.setColor(QPalette.Window, QColor(19, 19, 19))
+            palette.setColor(QPalette.WindowText, Qt.white)
+            palette.setColor(QPalette.Base, QColor(25, 25, 25))
+            palette.setColor(QPalette.AlternateBase, QColor(53, 53, 53))
+            palette.setColor(QPalette.ToolTipBase, Qt.white)
+            palette.setColor(QPalette.ToolTipText, Qt.white)
+            palette.setColor(QPalette.Text, Qt.white)
+            palette.setColor(QPalette.Button, QColor(53, 53, 53))
+            palette.setColor(QPalette.ButtonText, Qt.white)
+            palette.setColor(QPalette.BrightText, Qt.red)
+            palette.setColor(QPalette.Link, QColor(42, 130, 218))
+            palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+            palette.setColor(QPalette.HighlightedText, Qt.black)
+            app.setPalette(palette)
+            screen = app.primaryScreen()
+
+            window = Window(initial_state, my_list)
+            window.show()
+            initialized = True
+            sys.exit(app.exec_())
+        else:
+            t.failed()
+            t.join()
+            #print("failed to initialize")
+            init()
+            main()
+            #make it so it will alsop reinit when other fail
 
 if __name__ == "__main__":
     main()
+    
