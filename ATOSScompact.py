@@ -112,7 +112,7 @@ def enterFrame():
 def update(refresh):
     global window,loaded,amstempeln,stempelupdate,az,noupdate,timesincereload
     # Refresh if needed and switch to the iframe
-    if (refresh and amstempeln == False) or stempelupdate == True:
+    if (refresh and amstempeln == False):
         stempelupdate = False
         loaded = False
         try:
@@ -266,7 +266,7 @@ def stempeln(Pause):
         stempeln(Pause)
     finally:
         stempelupdate = True
-        window.update_list(True)
+        window.update_list(False)
         amstempeln = False
         stempelupdate = False
 
