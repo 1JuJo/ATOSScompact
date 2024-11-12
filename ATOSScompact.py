@@ -265,6 +265,8 @@ def stempeln(Pause):
     except (TimeoutException,StaleElementReferenceException):
         stempeln(Pause)
     finally:
+        #delay to prevent false values (please update in the future to be static)
+        time.sleep(0.5)
         stempelupdate = True
         window.update_list(False)
         amstempeln = False
