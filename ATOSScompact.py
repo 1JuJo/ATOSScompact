@@ -172,7 +172,7 @@ def update(refresh):
                         pause2 = "0:45" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:45", "%H:%M") else pause
                         pause3 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
                         my_list.append(f"👣 : {add_times(add_times(kommen, '6:00'), pause)}/{add_times(add_times(kommen, '7:42'), pause3)}")
-                        my_list.append(f"👣 in h : {subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time)}/{subtract_times(add_times(add_times(kommen, '7:42'), pause3), current_time)}")
+                        my_list.append(f"👣 in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause3), current_time))}")
                     continue
                 elif prev_element_text == "Arbeitszeitkonto":
                     prev_element_text = "💰"
