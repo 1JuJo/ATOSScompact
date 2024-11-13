@@ -1,6 +1,5 @@
 #do to
 #TimeoutException wenn des element nicht gefunden wird bitte irgendwann fix (bei allen elementen)
-#mach dass ein haken da ist wenn die zeit abgehakt ist und nicht mehr minus(beipsiel ich hab 6:10 AZ dann soll keine -00:10 da stehen sondern ein haken)sollte grün doder so sein
 
 from selenium import webdriver
 from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException,StaleElementReferenceException
@@ -352,6 +351,13 @@ def subtract_times(time1, time2):
 
     return formatted_time
 
+def checkMinus(input_string):
+    if "-" in input_string:
+        return "✔️"
+    else:
+        return input_string
+
+
 
 class Circle(QWidget):
     # Circle to display Anwesendheitsstatus
@@ -621,7 +627,7 @@ def main():
 
     #wait for userlogin
     #time.sleep(60)
-
+#✔️
     # Get the body element
     body = driver.find_element(By.TAG_NAME, 'body')
 
