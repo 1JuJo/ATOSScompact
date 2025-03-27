@@ -233,7 +233,7 @@ def sortListAndCalculateAdditionalValues(data):
         finalList.append(f"G in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '9:00'), pause2), current_time))}")
     else:
         finalList.append(f"G {gehen} ({subtract_times(datetime.now().strftime('%H:%M'), gehen)} / {add_times(subtract_times(datetime.now().strftime('%H:%M'), gehen), pause)}) ")
-    finalList.append(f"🌙 {überstunden} {' ('+add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+')' if datetime.strptime(arbeitszeit, '%H:%M') < datetime.strptime('7:42', '%H:%M') else add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+' +'+subtract_times(arbeitszeit, '7:42')}")          
+    finalList.append(f"🌙 {überstunden+ ' ('+add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+')' if datetime.strptime(arbeitszeit, '%H:%M') < datetime.strptime('7:42', '%H:%M') else add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+' +'+subtract_times(arbeitszeit, '7:42')}")          
     
     return finalList
 
