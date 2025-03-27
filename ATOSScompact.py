@@ -223,14 +223,14 @@ def sortListAndCalculateAdditionalValues(data):
     gehen = data["Gehen"]
     überstunden = data["Arbeitszeitkonto"]
     current_time = add_times(add_times(arbeitszeit, kommen), pause)
-    pause2 = "1:00" if datetime.strptime(pause, "%H:%M") < datetime.strptime("1:00", "%H:%M") else pause
-    pause3 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
+    pause2 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
+    pause3 = "0:45" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:45", "%H:%M") else pause
     finalList.append(f"⏰{arbeitszeit}")
     finalList.append(f"🍔{pause}")
     finalList.append(f"👣{kommen}")
     if gehen == "k.A.":
-        finalList.append(f"G : {add_times(add_times(kommen, '6:00'), pause3)}/{add_times(add_times(kommen, '7:42'), pause2)}/{add_times(add_times(kommen, '8:30'), pause2)}")
-        finalList.append(f"G in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause3), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '8:30'), pause2), current_time))}")
+        finalList.append(f"G : {add_times(add_times(kommen, '6:00'), pause)}/{add_times(add_times(kommen, '7:42'), pause2)}/{add_times(add_times(kommen, '9:00'), pause2)}")
+        finalList.append(f"G in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '9:00'), pause2), current_time))}")
     else:
         finalList.append(f"G {gehen} ({subtract_times(datetime.now().strftime('%H:%M'), gehen)} / {add_times(subtract_times(datetime.now().strftime('%H:%M'), gehen), pause)}) ")
     finalList.append(f"🌙 {überstunden} {' ('+add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+')' if datetime.strptime(arbeitszeit, '%H:%M') < datetime.strptime('7:42', '%H:%M') else add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+' +'+subtract_times(arbeitszeit, '7:42')}")          
@@ -288,112 +288,6 @@ def enterFrame():
     except (NoSuchElementException, TimeoutException, UnexpectedAlertPresentException):
         reload()
         return enterFrame()
-
-def update(refresh):
-    global window,loaded,amstempeln,stempelupdate,az,noupdate,timesincereload
-    # Refresh if needed and switch to the iframe
-    if (refresh and amstempeln == False):
-        stempelupdate = False
-        loaded = False
-        try:
-            driver.refresh()
-            timesincereload = time.time()
-            alert = driver.switch_to.alert
-            alert.accept()
-        except NoAlertPresentException:
-            pass
-
-    #switch to IFrame
-
-    if not enterFrame():
-        return [None ,[],False]
-    
-
-    # Function Variable cration
-    my_list = []
-    initial_state = None
-    arbeitszeit = None
-    kommen = None
-    pause = None
-    current_time = None
-
-
-    try:
-        # Wait for elements to be present
-        elements = WebDriverWait(driver, 50).until(
-            EC.presence_of_all_elements_located((By.CLASS_NAME, "caption"))
-        )
-        prev_element_text = None
-        prev_prev_element_text = None
-        first_occurrence = True
-        gone = False
-        #failsafe to prevent getting bad values
-        time.sleep(0.1)
-        # Iterate over the elements and extract the required data
-        for element in elements:
-            text = element.text
-            match = re.search(r'\b\d{1,2}:\d{2}\b', text)
-            if match:
-                if prev_element_text == "Heutige Anwesenheit":
-                    arbeitszeit = match.group()
-                    prev_element_text = "⏱"
-                elif prev_element_text == "Heutige Pause":
-                    prev_element_text = "🚫"
-                    pause = match.group()
-                elif prev_element_text == "Kommen":
-                    prev_element_text = "🕗"
-                    kommen = match.group()
-                elif prev_element_text == "Gehen":
-                    my_list.append(f"Weg seit {match.group()} ({subtract_times(datetime.now().strftime('%H:%M'), match.group())} / {add_times(subtract_times(datetime.now().strftime('%H:%M'), match.group()), pause)}) ")
-                    gone = True
-                    continue
-                elif prev_element_text == "gestempelte Wochen-AZ":
-                    if not gone:
-                        current_time = add_times(add_times(arbeitszeit, kommen), pause)
-                        pause2 = "0:45" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:45", "%H:%M") else pause
-                        pause3 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
-                        my_list.append(f"G : {add_times(add_times(kommen, '6:00'), pause3)}/{add_times(add_times(kommen, '7:42'), pause2)}/{add_times(add_times(kommen, '8:30'), pause2)}")
-                        my_list.append(f"G in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause3), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '8:30'), pause2), current_time))}")
-                    continue
-                elif prev_element_text == "Arbeitszeitkonto":
-                    prev_element_text = "💰"
-                    üs = text+" ("+ add_times(subtract_times(arbeitszeit, "7:42"),text)+")" if datetime.strptime(arbeitszeit, "%H:%M") < datetime.strptime("7:42", "%H:%M") else add_times(subtract_times(arbeitszeit, "7:42"),text)+" +" + subtract_times(arbeitszeit, "7:42")
-                    my_list.append(f"{prev_element_text} : {üs}")
-                    continue
-                elif prev_element_text == "AZK_Auszahlung":
-                    continue
-                if first_occurrence and prev_prev_element_text:
-                    initial_state = prev_prev_element_text
-                    first_occurrence = False
-                if prev_element_text:
-                    my_list.append(f"{prev_element_text} : {match.group()}")
-            prev_prev_element_text = prev_element_text
-            prev_element_text = text
-    finally:
-        # Switch back to the main content
-        driver.switch_to.default_content()
-
-        # Check if the information is valid
-        badcheck = initial_state is not None and arbeitszeit is not None
-        
-        # Check of information is out of sync
-        if arbeitszeit == az and amstempeln == False and initial_state == "Anwesend":
-            #noupdate = True
-            my_list.append("Desynced")
-            window.label.setText(window.label.text() + " ⟳")
-            QApplication.processEvents()
-            stuff = update(True)
-            initial_state = stuff[0]
-            my_list = stuff[1]
-            badcheck = stuff[2]
-        else:
-            if not amstempeln:
-                az = arbeitszeit
-
-        # Return the extracted data
-        loaded = True
-        return [initial_state, my_list, badcheck]
-    
 
 def stempeln(Pause):
     global amstempeln, window, stempelupdate,timesincereload
