@@ -11,7 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QSizePolicy, QPushButton
 from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplication
-from PyQt5.QtCore import Qt, QTimer, QPoint, QTime
+from PyQt5.QtCore import Qt, QTimer, QPoint, QTime, QMetaObject, Q_ARG
 from datetime import datetime, timedelta
 from pynput import keyboard
 import psutil
@@ -78,6 +78,13 @@ def wait_after_boot():
         time.sleep(1)
         scripttime += 1
         print(scripttime)
+
+
+def setEmojiFontForText(text, emoji):
+    if emoji:
+        return """<span style="font-family: 'notocoloremoji'; font-size: 12pt;">""" + text + """</span>"""
+    else:
+        return """<span style="font-family: 'arial'; font-size: 12pt;">""" + text + """</span>"""
 
 
 def process_response(driver, request_id):
@@ -216,6 +223,9 @@ def monitor_network(driver):
 
 
 def sortListAndCalculateAdditionalValues(data):
+    def format_emoji_line(emoji: str, text: str) -> str:
+        return f"{setEmojiFontForText(emoji, True)}{setEmojiFontForText(text, False)}"
+
     finalList =[]
     arbeitszeit = data["Heutige Anwesenheit"]
     pause = data["Heutige Pause"]
@@ -225,15 +235,16 @@ def sortListAndCalculateAdditionalValues(data):
     current_time = add_times(add_times(arbeitszeit, kommen), pause)
     pause2 = "0:30" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:30", "%H:%M") else pause
     pause3 = "0:45" if datetime.strptime(pause, "%H:%M") < datetime.strptime("0:45", "%H:%M") else pause
-    finalList.append(f"⏰{arbeitszeit}")
-    finalList.append(f"🍔{pause}")
-    finalList.append(f"👣{kommen}")
+    finalList.append(format_emoji_line("⏰", arbeitszeit))
+    finalList.append(format_emoji_line("🍔", pause))
+    finalList.append(format_emoji_line("👣", kommen))
+
     if gehen == "k.A.":
-        finalList.append(f"G : {add_times(add_times(kommen, '6:00'), pause)}/{add_times(add_times(kommen, '7:42'), pause2)}/{add_times(add_times(kommen, '9:00'), pause2)}")
-        finalList.append(f"G in h : {checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time))}/{checkMinus(subtract_times(add_times(add_times(kommen, '9:00'), pause2), current_time))}")
+        finalList.append(f"{setEmojiFontForText("G : "+add_times(add_times(kommen, '6:00'), pause)+"/"+add_times(add_times(kommen, '7:42'), pause2)+"/"+add_times(add_times(kommen, '9:00'), pause2),False)}")
+        finalList.append(f"{setEmojiFontForText("G in h : " + checkMinus(subtract_times(add_times(add_times(kommen, '6:00'), pause), current_time)) + "/" + checkMinus(subtract_times(add_times(add_times(kommen, '7:42'), pause2), current_time)) + "/" + checkMinus(subtract_times(add_times(add_times(kommen, '9:00'), pause2), current_time)), False)}")
     else:
-        finalList.append(f"G {gehen} ({subtract_times(datetime.now().strftime('%H:%M'), gehen)} / {add_times(subtract_times(datetime.now().strftime('%H:%M'), gehen), pause)}) ")
-    finalList.append(f"🌙 {überstunden+ ' ('+add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+')' if datetime.strptime(arbeitszeit, '%H:%M') < datetime.strptime('7:42', '%H:%M') else add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+' +'+subtract_times(arbeitszeit, '7:42')}")          
+        finalList.append(f"{setEmojiFontForText("G" + gehen + "(" + subtract_times(datetime.now().strftime('%H:%M'), gehen) + "/" + add_times(subtract_times(datetime.now().strftime('%H:%M'), gehen), pause)+")",False)} ")
+    finalList.append(f"{format_emoji_line("🌙", überstunden+ ' (' + add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+ ')' if datetime.strptime(arbeitszeit, '%H:%M') < datetime.strptime('7:42', '%H:%M') else add_times(subtract_times(arbeitszeit, '7:42'), überstunden)+' +'+subtract_times(arbeitszeit, '7:42'))}")          
     
     return finalList
 
@@ -288,6 +299,15 @@ def enterFrame():
     except (NoSuchElementException, TimeoutException, UnexpectedAlertPresentException):
         reload()
         return enterFrame()
+    
+def update_label_from_thread(label, html):
+
+    QMetaObject.invokeMethod(
+        label,
+        "setText",
+        Qt.QueuedConnection,
+        Q_ARG(str, html)
+    )
 
 def stempeln(Pause):
     global amstempeln, window, stempelupdate,timesincereload
@@ -549,7 +569,7 @@ class Window(QWidget):
     def update_list(self, status, extraced_data):
         self.circle.update_color(status)
         infostr = "   |   ".join(extraced_data)
-        self.label.setText(infostr)
+        update_label_from_thread(self.label, infostr)
         if status != "Anwesend":
             self.show_clock_button()
         else:
