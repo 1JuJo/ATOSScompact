@@ -81,10 +81,10 @@ def wait_after_boot():
 
 
 def setEmojiFontForText(text, emoji):
+    style = f"font-size: 15px;"
     if emoji:
-        return """<span style="font-family: 'notocoloremoji'; font-size: 12pt;">""" + text + """</span>"""
-    else:
-        return """<span style="font-family: 'arial'; font-size: 12pt;">""" + text + """</span>"""
+        style += " font-family: 'notocoloremoji';"
+    return f'<span style="{style}">{text}</span>'
 
 
 def process_response(driver, request_id):
@@ -544,7 +544,7 @@ class Window(QWidget):
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint)
         
         layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
+        layout.setContentsMargins(0, 2, 0, 0)  # Remove margins
         layout.setSpacing(0)  # Remove spacing
 
         # Create a horizontal layout for the circle and the button
@@ -559,6 +559,7 @@ class Window(QWidget):
 
         # Update the circle and lable
         self.label = QLabel(infostr)
+        self.label.setTextFormat(Qt.RichText)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         h_layout.addWidget(self.label)
 
@@ -715,7 +716,7 @@ def main():
     app.setPalette(palette)
     screen = app.primaryScreen()
 
-    window = Window("Abwesend", ["Programm wird gestartet"])
+    window = Window("Abwesend", ['<span style="font-size:14pt;">Programm wird gestartet</span>'])
     window.show()
     sys.exit(app.exec_())
 
