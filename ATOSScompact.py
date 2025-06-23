@@ -716,7 +716,7 @@ def main():
     app.setPalette(palette)
     screen = app.primaryScreen()
 
-    window = Window("Abwesend", ['<span style="font-size:14pt;">Programm wird gestartet</span>'])
+    window = Window("Abwesend", ['<span style="font-size:11pt;">Programm wird gestartet</span>'])
     window.show()
     sys.exit(app.exec_())
 
