@@ -87,17 +87,28 @@ def setEmojiFontForText(text, emoji):
     return f'<span style="{style}">{text}</span>'
 
 
-def process_response(driver, request_id):
+pending_requests = {}
+antidesync_time = time.time()
+
+def process_response(driver, request_id, timeout=5.0):
     """
-    Get response body for a specific request
+    Get response body for a specific request, retrying
+    until it's actually available or a timeout is reached.
     """
-    try:
-        response_body = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': request_id})
-        if 'body' in response_body:
-            return response_body['body']
-        return None
-    except Exception as e:
-        return None
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            response_body = driver.execute_cdp_cmd(
+                'Network.getResponseBody', {'requestId': request_id}
+            )
+            if 'body' in response_body:
+                return response_body['body']
+        except Exception:
+            # Body not yet available: swallow and retry
+            pass
+    # timed out
+    print(f"Timed out waiting for body of {request_id}")
+    return None
 
 def find_starting_points(response_body):
     startingpoints = {
@@ -162,60 +173,69 @@ def extract_connections(response_body):
 
 
 def monitor_network(driver):
-    global initialized,loaded
     """
-    Monitor and print network responses including bodies
+    Monitor and process network responses, but only once
+    the loadingFinished event has fired for each request.
     """
+    global antidesync_time, initialized, loaded, extracted_data
 
-    request_ids = set()
-    antidesync_time = time.time()
-    
     while True:
         logs = driver.get_log('performance')
-        
+
         for entry in logs:
             try:
-                log = json.loads(entry['message'])['message']
-                
-                if log['method'] == 'Network.responseReceived':
-                    params = log['params']
-                    request_id = params['requestId']
-                    
-                    if request_id not in request_ids:
-                        request_ids.add(request_id)
-                        response = params['response']
-                        url = response['url']
-                        status = response['status']
-                        mime_type = response['mimeType']
-                        if mime_type == "text/plain" and status == 200 and "zkauA10" in url:
-                            #print(f"\nNetwork Response:")
-                            #print(f"URL: {url}")
-                            #print(f"Status: {status}")
-                            #print(f"Type: {mime_type}")
-                            #print("Headers:", json.dumps(response['headers'], indent=2))
-                            #print(params["requestId"])
-                            
-                            # Get response body
-                            body = process_response(driver, request_id)
-                            if body:
-                                extract_connection = extract_connections(body)
-                                if len(extract_connection) != 0:
-                                    #print("\nResponse Body:")
-                                    extracted_data.update(extract_connection)
-                                    if len(extracted_data) == 8:
-                                    #    print(extracted_data)
-                                        window.update_list(extracted_data["Status"],sortListAndCalculateAdditionalValues(extracted_data))
-                                    #    print("Desync time: "+str(time.time() - antidesync_time))
-                                        antidesync_time = time.time()
-                                        initialized = True
-                                        loaded = True
-                                    #    print("-" * 80)  # Separator for readability
+                m = json.loads(entry['message'])['message']
+                method = m.get('method')
+
+                # 1) Capture responseReceived events that match our filter:
+                if method == 'Network.responseReceived':
+                    params = m['params']
+                    req_id = params['requestId']
+                    resp   = params['response']
+
+                    # filter for the one you care about
+                    if (resp['mimeType'] == "text/plain" and
+                        resp['status'] == 200 and
+                        "zkauA10" in resp['url']):
+                        # stash it until loadingFinished
+                        pending_requests[req_id] = {
+                            'url': resp['url'],
+                            'timestamp': time.time()
+                        }
+
+                # 2) Once loadingFinished fires, we know the body is ready:
+                elif method == 'Network.loadingFinished':
+                    req_id = m['params']['requestId']
+                    if req_id in pending_requests:
+                        # now fetch the body
+                        body = process_response(driver, req_id)
+                        if body:
+                            extract_connection = extract_connections(body)
+                            if extract_connection:
+                                extracted_data.update(extract_connection)
+                                if len(extracted_data) == 8:
+                                    window.update_list(
+                                        extracted_data["Status"],
+                                        sortListAndCalculateAdditionalValues(extracted_data)
+                                    )
+                                    initialized = True
+                                    loaded = True
+                                    antidesync_time = time.time()
+
+                        # clean up, so we don't re-process
+                        del pending_requests[req_id]
                         
             except Exception as e:
                 print(e)
                 pass
+        time.sleep(0.1)
+
+        # detect long gaps and reload if necessary
         if time.time() - antidesync_time > 65:
-            print(time.strftime("%H:%M:%S", time.localtime()) + "| Desync detected reloading page: " + str(time.time() - antidesync_time))
+            print(
+                time.strftime("%H:%M:%S", time.localtime()) +
+                "| Desync detected; reloading page."
+            )
             loaded = False
             reload()
             antidesync_time = time.time()
