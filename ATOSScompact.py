@@ -1,6 +1,7 @@
 #do to
 #TimeoutException wenn des element nicht gefunden wird bitte irgendwann fix (bei allen elementen)
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="seleniumwire")
 from selenium import webdriver
 from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException,StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
@@ -13,7 +14,9 @@ from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLa
 from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplication
 from PyQt5.QtCore import Qt, QTimer, QPoint, QTime, QMetaObject, Q_ARG
 from datetime import datetime, timedelta
+from seleniumwire import webdriver
 from pynput import keyboard
+import argparse
 import psutil
 import threading
 import re
@@ -22,9 +25,19 @@ import sys
 import random
 import socket
 import json
+import gzip
+import io
 
 
-debug = False
+parser = argparse.ArgumentParser(
+    description="Skript mit optionalem Debug-Modus ausführen"
+)
+# definiere das Flag --debug; wenn es auftaucht, wird args.debug True
+parser.add_argument('--debug', action='store_true', help='Aktiviere den Debug-Modus')
+
+
+args = parser.parse_args()
+debug = args.debug  # False wenn nicht gesetzt, sonst True
 
 #wait for internet connection
 def is_connected():
@@ -169,76 +182,58 @@ def extract_connections(response_body):
 
     return info
 
+def detectDesync():
+    global loaded, antidesync_time
+    try:
+        while True:
+            # if you want to auto‑reload after 65s with no new data:
+            if loaded and time.time() - antidesync_time > 65:
+                print(f"{time.strftime('%H:%M:%S')} | Desync detected; reloading page.")
+                loaded = False
+                driver.get(driver.current_url)
+                antidesync_time = time.time()
+            time.sleep(1)
+    except KeyboardInterrupt:
+        driver.quit()
 
 
+def interceptor(request, response):
+    global extracted_data, initialized, loaded, antidesync_time
 
-def monitor_network(driver):
-    """
-    Monitor and process network responses, but only once
-    the loadingFinished event has fired for each request.
-    """
-    global antidesync_time, initialized, loaded, extracted_data
+    content_type = response.headers.get('Content-Type', '')
+    content_encoding = response.headers.get('Content-Encoding', '')
 
-    while True:
-        logs = driver.get_log('performance')
+    if (response.status_code == 200
+        and content_type.startswith('text/plain')
+        and 'zkauA10' in request.url):
 
-        for entry in logs:
+        # Check for gzip compression
+        if content_encoding == 'gzip':
             try:
-                m = json.loads(entry['message'])['message']
-                method = m.get('method')
-
-                # 1) Capture responseReceived events that match our filter:
-                if method == 'Network.responseReceived':
-                    params = m['params']
-                    req_id = params['requestId']
-                    resp   = params['response']
-
-                    # filter for the one you care about
-                    if (resp['mimeType'] == "text/plain" and
-                        resp['status'] == 200 and
-                        "zkauA10" in resp['url']):
-                        # stash it until loadingFinished
-                        pending_requests[req_id] = {
-                            'url': resp['url'],
-                            'timestamp': time.time()
-                        }
-
-                # 2) Once loadingFinished fires, we know the body is ready:
-                elif method == 'Network.loadingFinished':
-                    req_id = m['params']['requestId']
-                    if req_id in pending_requests:
-                        # now fetch the body
-                        body = process_response(driver, req_id)
-                        if body:
-                            extract_connection = extract_connections(body)
-                            if extract_connection:
-                                extracted_data.update(extract_connection)
-                                if len(extracted_data) == 8:
-                                    window.update_list(
-                                        extracted_data["Status"],
-                                        sortListAndCalculateAdditionalValues(extracted_data)
-                                    )
-                                    initialized = True
-                                    loaded = True
-                                    antidesync_time = time.time()
-
-                        # clean up, so we don't re-process
-                        del pending_requests[req_id]
-                        
+                body_bytes = gzip.GzipFile(fileobj=io.BytesIO(response.body)).read()
+                body = body_bytes.decode('utf-8')
             except Exception as e:
-                print(e)
-                pass
-        time.sleep(0.1)
+                print(f"Failed to decompress gzipped response: {e}")
+                return
+        else:
+            try:
+                body = response.body.decode('utf-8')
+            except Exception as e:
+                print(f"Failed to decode response body: {e}")
+                return
 
-        # detect long gaps and reload if necessary
-        if time.time() - antidesync_time > 65:
-            print(
-                time.strftime("%H:%M:%S", time.localtime()) +
-                "| Desync detected; reloading page."
-            )
-            loaded = False
-            reload()
-            antidesync_time = time.time()
+        # Now parse/extract as before
+        info = extract_connections(body)
+        if info:
+            extracted_data.update(info)
+            if len(extracted_data) == 8:
+                window.update_list(
+                    extracted_data["Status"],
+                    sortListAndCalculateAdditionalValues(extracted_data)
+                )
+                initialized = True
+                loaded = True
+                antidesync_time = time.time()
 
 
 
@@ -703,6 +698,7 @@ def main():
             driver = webdriver.Chrome(service=s, options=chrome_options)
         except WebDriverException:
             pass  
+    driver.response_interceptor = interceptor
     # Open the website
     driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
     #WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
@@ -711,7 +707,7 @@ def main():
     #time.sleep(60)
 
     
-    monitor_thread = threading.Thread(target=monitor_network, args=(driver,))
+    monitor_thread = threading.Thread(target=detectDesync)
     monitor_thread.start()
 
     setup_keybinds()
