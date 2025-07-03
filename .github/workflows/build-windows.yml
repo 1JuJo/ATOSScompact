@@ -7,31 +7,36 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.8
+      - name: Set up Python 3.8
         uses: actions/setup-python@v4
         with:
           python-version: '3.8'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
 
-      - name: Build executable
+      - name: Build EXE (no UPX)
         run: |
-          pyinstaller --onefile --windowed ATOSScompact.py
+          pyinstaller \
+            --onefile \
+            --windowed \
+            --noupx \
+            --clean \
+            ATOSScompact.py
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
           name: script-windows-exe
           path: dist/ATOSScompact.exe
-          # optional: wie lange aufbewahren
+          # optional: kürzere Aufbewahrungszeit
           # retention-days: 7
