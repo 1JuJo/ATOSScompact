@@ -32,6 +32,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: script-windows-exe
-          path: dist/script.exe
+          path: dist/ATOSScompact.exe
           # optional: wie lange aufbewahren
           # retention-days: 7
