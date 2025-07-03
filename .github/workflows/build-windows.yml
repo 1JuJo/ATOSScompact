@@ -27,7 +27,7 @@ jobs:
       - name: Build EXE (no UPX)
         shell: bash
         run: |
-          pyinstaller --onefile --windowed --noupx --cleanATOSScompact.py
+          pyinstaller --onefile --windowed --noupx --clean ATOSScompact.py
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
