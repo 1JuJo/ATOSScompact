@@ -1,4 +1,4 @@
-name: Build and Upload Windows EXE
+name: Build Windows EXE
 
 on:
   push:
@@ -7,31 +7,31 @@ on:
     branches: [ main ]
 
 jobs:
-  build-windows:
+  build:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python 3.8
         uses: actions/setup-python@v4
         with:
           python-version: '3.8'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyinstaller
 
-      - name: Build EXE
+      - name: Build executable
         run: |
           pyinstaller --onefile --windowed ATOSScompact.py
 
-      - name: Upload Artifact
+      - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
         with:
           name: script-windows-exe
           path: dist/script.exe
-          # optional: kürzere Aufbewahrungsdauer
+          # optional: wie lange aufbewahren
           # retention-days: 7
