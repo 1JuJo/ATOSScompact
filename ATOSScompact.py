@@ -159,26 +159,28 @@ def extract_connections(response_body):
     info = {}
 
     startingpoint_Arbeitskonto, startingpoint_Kommen, startingpoint_Anwesenheit = find_starting_points(response_body)
-
-    if startingpoint_Anwesenheit != -1:
-        for value2 in range(1,6):
-            if value2 % 2 == 0 or value2 == 1:
-                info[response_body["rs"][startingpoint_Anwesenheit][1][value2][0][4][0][4][key][2]["value"]] = response_body["rs"][startingpoint_Anwesenheit][1][value2][0][4][0][4][key2][2]["value"]
-    
-    if startingpoint_Kommen != -1:
-        for value2 in range(1,4):
-            if value2 % 2 == 0 or value2 == 1:
-                info[response_body["rs"][startingpoint_Kommen][1][value2][0][4][0][4][key][2]["value"]] = response_body["rs"][startingpoint_Kommen][1][value2][0][4][0][4][key2][2]["value"]
-    
-    if startingpoint_Arbeitskonto != -1:
-        for value2 in range(1,7):
-            if not value2 % 2 == 0:
-                keypath = response_body["rs"][startingpoint_Arbeitskonto][1][value2][0][4][0][4][key][2]["value"]
-                valuepath = str(response_body["rs"][startingpoint_Arbeitskonto][1][value2][0][4][0][4][key2][2]["value"])
-                if keypath == "Arbeitszeitkonto":
-                    info[keypath] = valuepath.replace("\\u200B","")
-                else:
-                    info[keypath] = valuepath
+    try:
+        if startingpoint_Anwesenheit != -1:
+            for value2 in range(1,6):
+                if value2 % 2 == 0 or value2 == 1:
+                    info[response_body["rs"][startingpoint_Anwesenheit][1][value2][0][4][0][4][key][2]["value"]] = response_body["rs"][startingpoint_Anwesenheit][1][value2][0][4][0][4][key2][2]["value"]
+        
+        if startingpoint_Kommen != -1:
+            for value2 in range(1,4):
+                if value2 % 2 == 0 or value2 == 1:
+                    info[response_body["rs"][startingpoint_Kommen][1][value2][0][4][0][4][key][2]["value"]] = response_body["rs"][startingpoint_Kommen][1][value2][0][4][0][4][key2][2]["value"]
+        
+        if startingpoint_Arbeitskonto != -1:
+            for value2 in range(1,7):
+                if not value2 % 2 == 0:
+                    keypath = response_body["rs"][startingpoint_Arbeitskonto][1][value2][0][4][0][4][key][2]["value"]
+                    valuepath = str(response_body["rs"][startingpoint_Arbeitskonto][1][value2][0][4][0][4][key2][2]["value"])
+                    if keypath == "Arbeitszeitkonto":
+                        info[keypath] = valuepath.replace("\\u200B","")
+                    else:
+                        info[keypath] = valuepath
+    except Exception as e:
+        pass
 
     return info
 
@@ -357,26 +359,35 @@ def stempeln(Pause):
                 WebDriverWait(driver, 30).until(
                     lambda d: not element.get_attribute("disabled") == "disabled"
                 )
-        elements = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-        )
-            
-
-        for element in elements:
-            if element.text.startswith(value):
-                #print("stempel " + value)
-                if stempelState == Pause:
-                    #print("click?")
-                    element.click()
-                    window.label.setText("Stempel "+value+" hat geklappt")
-                else:
-                    window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
-                    time.sleep(0.5)
-                    print(extracted_data)
-                    window.update_list(extracted_data["Status"],sortListAndCalculateAdditionalValues(extracted_data))
-                driver.switch_to.default_content()
+        elementClicked = False
+        while True:
+            if elementClicked:
                 break
-    except (TimeoutException,StaleElementReferenceException):
+            elements = WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
+            )
+            for element in elements:
+                if element.text.startswith(value):
+                    print("stempel " + value)
+                    if stempelState == Pause:
+                        #print("click?")
+                        element.click()
+                        window.label.setText("Stempel "+value+" hat geklappt")
+                    else:
+                        window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
+                        time.sleep(0.5)
+                        print(extracted_data)
+                        window.update_list(extracted_data["Status"],sortListAndCalculateAdditionalValues(extracted_data))
+                    driver.switch_to.default_content()
+                    elementClicked = True
+                    break
+                else:
+                    pass
+            if (not elementClicked):
+                window.label.setText("Falls du das siehst, gehe zu Robin ;-;")
+
+    except Exception as e:
+        print("oh no something bad happened:" + e)
         stempeln(Pause)
     finally:
         stempelupdate = True
