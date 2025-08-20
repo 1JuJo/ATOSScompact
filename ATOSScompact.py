@@ -40,27 +40,28 @@ args = parser.parse_args()
 debug = args.debug  # False wenn nicht gesetzt, sonst True
 
 #wait for internet connection
-def is_connected():
-    try:
-        socket.create_connection(("8.8.8.8", 80))
-        return True
-    except OSError:
-        pass
-    return False
-
+# def is_connected():
+#     try:
+#         socket.create_connection(("8.8.8.8", 80))
+#         return True
+#     except OSError:
+#         pass
+#     return False
+# 
 #while True:
 #    if is_connected():
 #        break
 #    else:
 #        time.sleep(0.1)
-
-
+# 
+# 
 #driver.set_network_conditions(
 #    offline=False,
 #    latency=5,  # additional latency (ms)
 #    download_throughput=500 * 1024,  # maximal throughput
 #    upload_throughput=500 * 1024  # maximal throughput
 #)
+
 # Set global variables
 amstempeln = False
 stempelupdate = False
@@ -72,6 +73,8 @@ generalvaluesrecived = False
 additionalvaluesrecived = False
 timesincereload = time.time()
 extracted_data = {}
+pending_requests = {}
+antidesync_time = time.time()
 driver = None
 window = None
 screen = None
@@ -98,10 +101,6 @@ def setEmojiFontForText(text, emoji):
     if emoji:
         style += " font-family: 'notocoloremoji';"
     return f'<span style="{style}">{text}</span>'
-
-
-pending_requests = {}
-antidesync_time = time.time()
 
 def process_response(driver, request_id, timeout=5.0):
     """
@@ -387,7 +386,8 @@ def stempeln(Pause):
                 window.label.setText("Falls du das siehst, gehe zu Robin ;-;")
 
     except Exception as e:
-        print("oh no something bad happened:" + e)
+        print("oh no something bad happened:")
+        print(e)
         stempeln(Pause)
     finally:
         stempelupdate = True
