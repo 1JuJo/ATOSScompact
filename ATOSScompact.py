@@ -90,7 +90,7 @@ def wait_for_process(process_name):
 
 def wait_after_boot():
     scripttime = 0
-    while time.time()- psutil.boot_time() < 150 and scripttime < 3:
+    while time.time()- psutil.boot_time() < 150 and scripttime < 5:
         time.sleep(1)
         scripttime += 1
         print(scripttime)
@@ -325,7 +325,7 @@ def update_label_from_thread(label, html):
         Q_ARG(str, html)
     )
 
-def stempeln(Pause):
+def stempeln(Pause,stempeln_already_opened = False):
     global amstempeln, window, stempelupdate,timesincereload
     amstempeln = True
     value = "Pause"
@@ -337,20 +337,21 @@ def stempeln(Pause):
     enterFrame()
     # Loop trough the elements to "Stempel"
     try:
-        # Wait for button to be active
-        elements = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
-        )
-        for element in elements:
-            if element.text.startswith("Zeiterfassung (Kommen"):
-                WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, ".action-item"))
-                )
-                WebDriverWait(driver, 30).until(
-                    lambda d: not element.get_attribute("disabled") == "disabled"
-                )
-                element.click()
-                break
+        if not stempeln_already_opened:
+            # Wait for button to be active
+            elements = WebDriverWait(driver, 10).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
+            )
+            for element in elements:
+                if element.text.startswith("Zeiterfassung (Kommen"):
+                    WebDriverWait(driver, 10).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, ".action-item"))
+                    )
+                    WebDriverWait(driver, 30).until(
+                        lambda d: not element.get_attribute("disabled") == "disabled"
+                    )
+                    element.click()
+                    break
         elements = WebDriverWait(driver, 10).until(
             EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
         )
@@ -384,11 +385,12 @@ def stempeln(Pause):
                     pass
             if (not elementClicked):
                 window.label.setText("Falls du das siehst, gehe zu Robin ;-;")
+                stempeln(Pause, True)
 
     except Exception as e:
         print("oh no something bad happened:")
         print(e)
-        stempeln(Pause)
+        stempeln(Pause, True)
     finally:
         stempelupdate = True
         amstempeln = False
