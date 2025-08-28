@@ -1,3 +1,10 @@
 selenium
 .vscode
 __pycache__
+build
+dist
+ATOSScompact.spec
+python-3.8.10-amd64.exe
+requirements.txt
+ATOSScompact_Icon_new.ico
+.gitignore
