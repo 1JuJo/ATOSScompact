@@ -39,28 +39,123 @@ parser.add_argument('--debug', action='store_true', help='Aktiviere den Debug-Mo
 args = parser.parse_args()
 debug = args.debug  # False wenn nicht gesetzt, sonst True
 
-#wait for internet connection
-# def is_connected():
-#     try:
-#         socket.create_connection(("8.8.8.8", 80))
-#         return True
-#     except OSError:
-#         pass
-#     return False
-# 
-#while True:
+# wait for internet connection
+def wait_for_internet(host="8.8.8.8", port=53, timeout=5, max_wait=60):
+    """
+    Warte bis eine Internetverbindung besteht.
+    host/port = DNS von Google (oder anderen stabilen Host).
+    """
+    start = time.time()
+    while time.time() - start < max_wait:
+        try:
+            socket.setdefaulttimeout(timeout)
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+            print("Internetverbindung hergestellt.")
+            return True
+        except OSError:
+            time.sleep(1)
+    print("Warnung: Keine Internetverbindung nach max_wait.")
+    return False
+
+def wait_for_nonempty_body(driver, timeout=2.0, poll=0.1):
+    """
+    Warte bis document.body irgendetwas enthält (Text oder child elements).
+    - timeout: maximale Wartezeit in Sekunden (klein wählen, z.B. 1-3s)
+    - poll: Poll-Intervall
+    Rückgabewerte:
+      True      -> body ist nicht-leer und kein 'neterror'
+      'neterror'-> body hat class 'neterror'
+      False     -> timeout, body blieb leer
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            # Wir fragen in einer JS-Ausführung textContent-Länge + childElementCount ab
+            info = driver.execute_script(
+                "return {"
+                " text: document.body ? (document.body.textContent || '').trim().length : 0,"
+                " children: document.body ? document.body.childElementCount : 0,"
+                " cls: document.body ? document.body.className : ''"
+                "};"
+            )
+            text_len = int(info.get('text', 0) or 0)
+            children = int(info.get('children', 0) or 0)
+            cls = (info.get('cls') or '').lower()
+
+            total = text_len + children
+            if total > 0:
+                if 'neterror' in cls:
+                    return 'neterror'
+                return True
+            # Wenn body leer, kurz warten und nochmal prüfen
+        except WebDriverException:
+            # kurze swallow, z.B. wenn browser noch navigiert
+            pass
+        except Exception:
+            pass
+        time.sleep(poll)
+    return False
+
+
+def robust_get(driver, url, retries=6, nonempty_timeout=2.0, wait_between=0.6):
+    """
+    Lade URL, prüfe schnell auf non-empty body. Wenn neterror erkannt wird, reload sofort.
+    - nonempty_timeout: wie lange wir direkt auf non-empty body warten (kleiner Wert sorgt für schnelle retries)
+    - retries: wie oft wir versuchen bevor wir aufgeben
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            driver.get(url)
+        except WebDriverException:
+            # falls kurzfristig Navigation fehlschlägt, versuchen wir gleich wieder
+            print(f"[robust_get] driver.get() raised, attempt {attempt}")
+            time.sleep(wait_between)
+            continue
+
+        # statt time.sleep(3) -> dynamisch auf body warten
+        status = wait_for_nonempty_body(driver, timeout=nonempty_timeout)
+        if status is True:
+            # body nicht leer und kein neterror -> Seite ist sichtbar
+            # kurze zusätzliche Prüfung: falls chrome-error-URL geladen wurde:
+            try:
+                cur = driver.current_url
+                if cur and cur.startswith("chrome-error://"):
+                    print(f"[robust_get] chrome-error URL erkannt ({cur}), retrying")
+                    continue
+            except Exception:
+                pass
+            print(f"[robust_get] Seite geladen (attempt {attempt})")
+            return True
+        elif status == 'neterror':
+            # Neterror sofort behandeln: refresh und schneller retry
+            print(f"[robust_get] neterror erkannt (attempt {attempt}) -> refresh und retry")
+            try:
+                driver.refresh()
+            except Exception:
+                pass
+            time.sleep(0.2)  # sehr kurz
+            continue
+        else:
+            # Body blieb leer innerhalb nonempty_timeout
+            print(f"[robust_get] body leer nach {nonempty_timeout}s (attempt {attempt}) -> retry")
+            continue
+
+    print("[robust_get] Seite konnte nach mehreren Versuchen nicht geladen werden.")
+    return False
+
+# while True:
 #    if is_connected():
 #        break
 #    else:
 #        time.sleep(0.1)
-# 
-# 
-#driver.set_network_conditions(
+
+
+# driver.set_network_conditions(
 #    offline=False,
 #    latency=5,  # additional latency (ms)
 #    download_throughput=500 * 1024,  # maximal throughput
 #    upload_throughput=500 * 1024  # maximal throughput
-#)
+# )
 
 # Set global variables
 amstempeln = False
@@ -701,8 +796,10 @@ def main():
     if not debug:
         chrome_options.add_argument("--headless")  # Run in headless mode
 
-    wait_for_process("ZSTray")
-    wait_after_boot()
+    # wait_for_process("ZSTray")
+    # wait_after_boot()
+
+    wait_for_internet()
 
     # Setup WebDriver
     while driver is None:
@@ -713,7 +810,8 @@ def main():
             pass  
     driver.response_interceptor = interceptor
     # Open the website
-    driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
+    if not robust_get(driver, 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'):
+        raise RuntimeError("ATOSS Seite konnte nicht geladen werden.")
     #WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
     
     #wait for userlogin
