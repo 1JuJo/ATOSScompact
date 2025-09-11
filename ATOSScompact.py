@@ -27,7 +27,11 @@ import socket
 import json
 import gzip
 import io
-
+import logging
+# silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
+logging.getLogger('seleniumwire').setLevel(logging.ERROR)
+logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
+logging.getLogger('mitmproxy').setLevel(logging.ERROR)
 
 parser = argparse.ArgumentParser(
     description="Skript mit optionalem Debug-Modus ausführen"
@@ -419,9 +423,8 @@ def update_label_from_thread(label, html):
         Qt.QueuedConnection,
         Q_ARG(str, html)
     )
-
-def stempeln(Pause,stempeln_already_opened = False):
-    global amstempeln, window, stempelupdate,timesincereload
+def stempeln(Pause, stempeln_already_opened = False):
+    global amstempeln, window, stempelupdate, timesincereload
     amstempeln = True
     value = "Pause"
     if Pause == False:
@@ -430,62 +433,138 @@ def stempeln(Pause,stempeln_already_opened = False):
     stempelState = window.circle.color.name() == "#00ff00"
     # Switch to the iframe
     enterFrame()
-    # Loop trough the elements to "Stempel"
+
     try:
         if not stempeln_already_opened:
             # Wait for button to be active
-            elements = WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
-            )
-            for element in elements:
-                if element.text.startswith("Zeiterfassung (Kommen"):
-                    WebDriverWait(driver, 10).until(
-                        EC.element_to_be_clickable((By.CSS_SELECTOR, ".action-item"))
-                    )
-                    WebDriverWait(driver, 30).until(
-                        lambda d: not element.get_attribute("disabled") == "disabled"
-                    )
-                    element.click()
-                    break
-        elements = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
-        )
-        for element in elements:
-                WebDriverWait(driver, 30).until(
-                    lambda d: not element.get_attribute("disabled") == "disabled"
+            try:
+                elements = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
                 )
-        elementClicked = False
-        while True:
-            if elementClicked:
-                break
-            elements = WebDriverWait(driver, 10).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-            )
-            for element in elements:
-                if element.text.startswith(value):
-                    print("stempel " + value)
-                    if stempelState == Pause:
-                        #print("click?")
-                        element.click()
-                        window.label.setText("Stempel "+value+" hat geklappt")
-                    else:
-                        window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
-                        time.sleep(0.5)
-                        print(extracted_data)
-                        window.update_list(extracted_data["Status"],sortListAndCalculateAdditionalValues(extracted_data))
-                    driver.switch_to.default_content()
-                    elementClicked = True
-                    break
-                else:
-                    pass
-            if (not elementClicked):
-                window.label.setText("Falls du das siehst, gehe zu Robin ;-;")
-                stempeln(Pause, True)
+            except Exception:
+                elements = driver.find_elements(By.CSS_SELECTOR, ".action-item")
 
+            # iterate but handle stale elements by refetching if necessary
+            clicked_action = False
+            for _ in range(3):  # kleine retry-schleife
+                try:
+                    for element in elements:
+                        try:
+                            txt = element.text
+                        except StaleElementReferenceException:
+                            # element stale - refetch and restart outer loop
+                            elements = driver.find_elements(By.CSS_SELECTOR, ".action-item")
+                            raise StaleElementReferenceException()
+                        if txt.startswith("Zeiterfassung (Kommen"):
+                            WebDriverWait(driver, 10).until(
+                                EC.element_to_be_clickable((By.CSS_SELECTOR, ".action-item"))
+                            )
+                            # wait until not disabled (try/catch to handle staleness)
+                            try:
+                                WebDriverWait(driver, 30).until(
+                                    lambda d, e=element: not (e.get_attribute("disabled") == "disabled")
+                                )
+                            except StaleElementReferenceException:
+                                elements = driver.find_elements(By.CSS_SELECTOR, ".action-item")
+                                raise
+                            element.click()
+                            clicked_action = True
+                            break
+                    if clicked_action:
+                        break
+                except StaleElementReferenceException:
+                    # kleines Delay und retry
+                    time.sleep(0.2)
+                    continue
+
+        # Wait for the next buttons to appear (info-element-button)
+        # attempt a few retries to avoid stale refs
+        info_buttons = []
+        for _ in range(3):
+            try:
+                info_buttons = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
+                )
+                # try a quick attribute read to ensure they're stable
+                stable = True
+                for b in info_buttons:
+                    try:
+                        _ = b.get_attribute("disabled")
+                    except StaleElementReferenceException:
+                        stable = False
+                        break
+                if stable:
+                    break
+            except Exception:
+                pass
+            time.sleep(0.2)
+
+        # now the main loop to find the title-element and click it
+        elementClicked = False
+        max_retries = 12
+        retries = 0
+        while not elementClicked and retries < max_retries:
+            try:
+                elements = WebDriverWait(driver, 10).until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
+                )
+            except Exception:
+                elements = driver.find_elements(By.CSS_SELECTOR, ".title-element")
+
+            found_in_this_round = False
+            for element in elements:
+                try:
+                    text = element.text
+                except StaleElementReferenceException:
+                    # went stale - we'll refetch in next while iteration
+                    found_in_this_round = False
+                    break
+
+                if text.startswith(value):
+                    try:
+                        print("stempel " + value)
+                        if stempelState == Pause:
+                            element.click()
+                            window.label.setText("Stempel "+value+" hat geklappt")
+                        else:
+                            window.label.setText("Du hast versucht gleich zu stempeln bitte mach das nicht")
+                            time.sleep(0.5)
+                            print(extracted_data)
+                            window.update_list(extracted_data["Status"], sortListAndCalculateAdditionalValues(extracted_data))
+                        driver.switch_to.default_content()
+                        elementClicked = True
+                        found_in_this_round = True
+                        break
+                    except StaleElementReferenceException:
+                        # element became stale just before click: retry
+                        found_in_this_round = False
+                        break
+                    except Exception as e:
+                        # andere Ausnahme beim Klick -> log und retry
+                        print("Fehler beim Klick auf title-element:", e)
+                        found_in_this_round = False
+                        break
+
+            if not found_in_this_round:
+                # Falls nicht gefunden: zeige Hinweis und retry (wie vorher, aber ohne Rekursion)
+                window.label.setText("Falls du das siehst, gehe zu Robin ;-;")
+                retries += 1
+                time.sleep(0.25)
+                continue
+
+        if not elementClicked:
+            print("Konnte das passende .title-element nach mehreren Versuchen nicht klicken.")
+            # Optional: raise oder nur loggen
     except Exception as e:
         print("oh no something bad happened:")
         print(e)
-        stempeln(Pause, True)
+        # avoid infinite recursion here: try a single fallback attempt
+        try:
+            # kleiner Fallback: versuche nochmal rekursiv genau einmal (wie vorher)
+            if not stempeln_already_opened:
+                stempeln(Pause, True)
+        except Exception as e2:
+            print("Fallback auch fehlgeschlagen:", e2)
     finally:
         stempelupdate = True
         amstempeln = False
@@ -801,13 +880,19 @@ def main():
 
     wait_for_internet()
 
-    # Setup WebDriver
+        # Setup WebDriver
+    seleniumwire_options = {
+        # don't proxy local services (prevents mitmproxy reading local sockets and throwing TcpTimeout)
+        'ignore_hosts': ['127.0.0.1', 'localhost', '::1']
+    }
+
     while driver is None:
         try:
             s = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=s, options=chrome_options)
+            # pass seleniumwire_options here
+            driver = webdriver.Chrome(service=s, options=chrome_options, seleniumwire_options=seleniumwire_options)
         except WebDriverException:
-            pass  
+            pass
     driver.response_interceptor = interceptor
     # Open the website
     if not robust_get(driver, 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'):
