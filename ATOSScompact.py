@@ -883,7 +883,8 @@ def main():
         # Setup WebDriver
     seleniumwire_options = {
         # don't proxy local services (prevents mitmproxy reading local sockets and throwing TcpTimeout)
-        'ignore_hosts': ['127.0.0.1', 'localhost', '::1']
+        'ignore_hosts': ['127.0.0.1', 'localhost', '::1'],
+        'connection_timeout': None
     }
 
     while driver is None:
