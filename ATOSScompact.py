@@ -1,5 +1,3 @@
-#do to
-#TimeoutException wenn des element nicht gefunden wird bitte irgendwann fix (bei allen elementen)
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="seleniumwire")
 from selenium import webdriver
@@ -10,7 +8,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QListWidget, QListWidgetItem, QSizePolicy, QPushButton
+from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton
 from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplication
 from PyQt5.QtCore import Qt, QTimer, QPoint, QTime, QMetaObject, Q_ARG
 from datetime import datetime, timedelta
@@ -162,8 +160,6 @@ def robust_get(driver, url, retries=6, nonempty_timeout=2.0, wait_between=0.6):
 # )
 
 # Set global variables
-DEFAULT_SCREEN_HEIGHT = 768
-
 amstempeln = False
 stempelupdate = False
 loaded = False
@@ -694,171 +690,115 @@ def checkMinus(input_string):
 
 
 class Circle(QWidget):
-    # Circle to display Anwesendheitsstatus
     def __init__(self, initial_state):
-        base_screen = screen or primary_screen_fallback()
-        height_value = base_screen.size().height() if base_screen else DEFAULT_SCREEN_HEIGHT
-        self.circle_height = int(height_value / 48)
         super().__init__()
-        self.color = QColor(Qt.green) if initial_state == "Anwesend" else QColor(Qt.red)
-        self.setMinimumSize(int(self.circle_height * 1.2), self.circle_height)
+        self.diameter = 18
+        self.color = QColor(Qt.green if initial_state == "Anwesend" else Qt.red)
+        self.setFixedSize(self.diameter, self.diameter)
 
     def paintEvent(self, event):
-        # Draw the circle with the current color
         painter = QPainter(self)
-        painter.setPen(QPen(Qt.black, 2, Qt.SolidLine))
+        painter.setPen(QPen(Qt.black, 2))
         painter.setBrush(QBrush(self.color, Qt.SolidPattern))
-        painter.drawEllipse(0, 0, self.circle_height , self.circle_height )
-
+        painter.drawEllipse(0, 0, self.diameter, self.diameter)
 
     def update_color(self, state):
-        # Update the color based on the state and repaint the widget
-        self.color = QColor(Qt.green) if state == "Anwesend" else QColor(Qt.red)
-        self.setMinimumSize(int(self.circle_height * 1.2), self.circle_height)
+        self.color = QColor(Qt.green if state == "Anwesend" else Qt.red)
         self.update()
-# Unused
-class NoFocusListWidget(QListWidget):
-    def focusInEvent(self, event):
-        pass
+
 
 class ClockInButton(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self):
+        super().__init__()
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint)
-        
-        # Create layout
-        layout = QVBoxLayout()
+
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # Create button
+
         self.button = QPushButton("Einspempeln")
-        self.button.setStyleSheet("""
-            QPushButton {
-                background-color: #333333;
-                color: white;
-                border: none;
-                padding: 5px;
-                border-radius: 3px;
-            }
-            QPushButton:hover {
-                background-color: #444444;
-            }
-            QPushButton:pressed {
-                background-color: #222222;
-            }
-        """)
-        self.button.clicked.connect(lambda: (stempeln(False), window.hide_clock_button()))
+        self.button.setStyleSheet(
+            """
+            QPushButton { background-color: #333; color: white; border: none; padding: 6px; }
+            QPushButton:hover { background-color: #444; }
+            QPushButton:pressed { background-color: #222; }
+            """
+        )
+        self.button.clicked.connect(self._handle_click)
         layout.addWidget(self.button)
-        
-        self.setLayout(layout)
-        
-    def adjustSize(self):
-        screen_obj = primary_screen_fallback()
-        if not screen_obj:
+
+    def _handle_click(self):
+        if driver is None:
+            if window:
+                update_label_from_thread(window.label, "Browser noch nicht bereit")
             return
-        size = screen_obj.size()
-        height = int(size.height() / 48)
-        button_width = int(size.width() / 19.2)
-        self.setGeometry(int(size.width() / 19.2), screen_obj.geometry().topLeft().y() + height + 5, button_width, height)
+        stempeln(False)
+        if window:
+            window.hide_clock_button()
+
+    def show_at_corner(self):
+        screen_obj = primary_screen_fallback()
+        if screen_obj is None:
+            self.show()
+            return
+        area = screen_obj.geometry()
+        self.setGeometry(area.x() + 12, area.y() + 48, 140, 32)
+        self.show()
 
 
 class Window(QWidget):
-    def __init__(self, initial_state, my_list):
+    def __init__(self, initial_state, info_items):
         super().__init__()
         self.clock_button = None
-        self.initUI(initial_state, my_list)
-
-    def initUI(self, initial_state, my_list):
-        for v in QGuiApplication.screens():
-            v.geometryChanged.connect(self.adjustSize)
         self.setWindowTitle("ATOSS Compact")
-        screen_ref = screen or primary_screen_fallback()
-        top_y = 0
-        if screen_ref:
-            size = screen_ref.size()
-            top_y = screen_ref.geometry().topLeft().y()
-        else:
-            screens = QGuiApplication.screens()
-            if not screens:
-                raise RuntimeError("Kein Bildschirm verfügbar")
-            screen_obj = screens[0]
-            rect = screen_obj.geometry()
-            size = rect.size()
-            top_y = rect.top()
-        height = int(size.height()/48)
-        self.setGeometry(int(size.width()/19.2), top_y, height, height) #Position and size of the window
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint)
-        
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 2, 0, 0)  # Remove margins
-        layout.setSpacing(0)  # Remove spacing
 
-        # Create a horizontal layout for the circle and the button
-        h_layout = QHBoxLayout()
-        h_layout.setContentsMargins(0, 0, 0, 0)  # Remove margins
-        h_layout.setSpacing(0)  # Remove spacing
-        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+
         self.circle = Circle(initial_state)
-        h_layout.addWidget(self.circle)
+        layout.addWidget(self.circle)
 
-        infostr = "   |   ".join(my_list) # Build the string to display in the lable
-
-        # Update the circle and lable
-        self.label = QLabel(infostr)
+        self.label = QLabel("   |   ".join(info_items))
         self.label.setTextFormat(Qt.RichText)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        h_layout.addWidget(self.label)
+        layout.addWidget(self.label)
 
-        layout.addLayout(h_layout)
+        self.resize(420, self.circle.height() + 8)
+        self.move_to_corner()
 
-        self.setLayout(layout)
+    def move_to_corner(self):
+        screen_obj = primary_screen_fallback()
+        if screen_obj is None:
+            return
+        area = screen_obj.geometry()
+        self.move(area.x(), area.y())
 
     def update_list(self, status, extraced_data):
         self.circle.update_color(status)
-        infostr = "   |   ".join(extraced_data)
-        update_label_from_thread(self.label, infostr)
+        update_label_from_thread(self.label, "   |   ".join(extraced_data))
+        self.move_to_corner()
         if status != "Anwesend":
             self.show_clock_button()
         else:
             self.hide_clock_button()
-    
+
     def show_clock_button(self):
         if not self.clock_button:
             self.clock_button = ClockInButton()
-            self.clock_button.adjustSize()
-            self.clock_button.show()
+        self.clock_button.show_at_corner()
 
     def hide_clock_button(self):
         if self.clock_button:
             self.clock_button.hide()
             self.clock_button = None
 
-    def adjustSize(self):
-        while True:
-            screen_now = primary_screen_fallback()
-            if screen_now and screen_now.availableGeometry().height() != 0:
-                break
-            time.sleep(0.1)
-            QApplication.processEvents()
-
-        size = screen_now.size()
-        height = int(size.height() / 48)
-        self.circle.circle_height = height
-        self.label.setMinimumSize(int(height * 1.2), height)
-        self.setGeometry(int(size.width() / 19.2), screen_now.geometry().topLeft().y(), self.width(), height)  # Set y-coordinate to 0
-        if self.clock_button:
-            self.clock_button.adjustSize()
-
-    # Move the window (those 2 functions are not needed anymore)
     def mousePressEvent(self, event):
         self.oldPos = event.globalPos()
 
     def mouseMoveEvent(self, event):
-        globalpos = event.globalPos()
-        delta = QPoint(globalpos - self.oldPos)
+        delta = event.globalPos() - self.oldPos
         self.move(self.x() + delta.x(), self.y() + delta.y())
-        self.oldPos = globalpos
+        self.oldPos = event.globalPos()
 
 def setup_keybinds():
     global last_time_pressed,initialized,loaded,amstempeln,stempeln
@@ -906,55 +846,50 @@ def setup_keybinds():
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
             listener.join()
 
-    listener_thread = threading.Thread(target=start_keyboard_listener)
+    listener_thread = threading.Thread(target=start_keyboard_listener, daemon=True)
     listener_thread.start()
 
-def main():
-    global  window, screen,t,timesincereload,driver,debug,initialized
+def bootstrap_system():
+    global driver, debug
 
-    # Setup Chrome options
-    chrome_options = Options()
-    chrome_options.add_argument("--user-data-dir=selenium")  # Path to your chrome profile
-    chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-    if not debug:
-        chrome_options.add_argument("--headless")  # Run in headless mode
-
-    # wait_for_process("ZSTray")
-    # wait_after_boot()
-
+    update_label_from_thread(window.label, "Programm wird gestartet   |   Warte auf Internet...")
     while not wait_for_internet():
-        print("Internet noch nicht bereit. Neuer Versuch in 5s.")
         time.sleep(5)
 
-        # Setup WebDriver
+    chrome_options = Options()
+    chrome_options.add_argument("--user-data-dir=selenium")
+    chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+    if not debug:
+        chrome_options.add_argument("--headless")
+
     seleniumwire_options = {
-        # don't proxy local services (prevents mitmproxy reading local sockets and throwing TcpTimeout)
         'ignore_hosts': ['127.0.0.1', 'localhost', '::1'],
         'connection_timeout': None
     }
 
-    while driver is None:
+    update_label_from_thread(window.label, "Programm wird gestartet   |   Starte Browser...")
+    while True:
         try:
-            s = Service(ChromeDriverManager().install())
-            # pass seleniumwire_options here
-            driver = webdriver.Chrome(service=s, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            break
         except (WebDriverException, Exception) as exc:
             print(f"Fehler beim Starten von ChromeDriver: {exc}")
             time.sleep(2)
+
     driver.response_interceptor = interceptor
-    # Open the website
+
+    update_label_from_thread(window.label, "Programm wird gestartet   |   Lade ATOSS...")
     if not robust_get(driver, 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'):
-        raise RuntimeError("ATOSS Seite konnte nicht geladen werden.")
-    #WebDriverWait(driver, 30).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
-    
-    #wait for userlogin
-    #time.sleep(60)
+        update_label_from_thread(window.label, "Fehler beim Laden der ATOSS Seite")
+        return
 
-    
-    monitor_thread = threading.Thread(target=detectDesync)
-    monitor_thread.start()
-
+    threading.Thread(target=detectDesync, daemon=True).start()
     setup_keybinds()
+    update_label_from_thread(window.label, "ATOSS geladen   |   Warte auf Daten...")
+
+def main():
+    global  window, screen,driver,debug,initialized
 
     app = QApplication(sys.argv)
 
@@ -984,74 +919,13 @@ def main():
     palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
     palette.setColor(QPalette.HighlightedText, Qt.black)
     app.setPalette(palette)
-    screen = app.primaryScreen()
 
     window = Window("Abwesend", ['<span style="font-size:11pt;">Programm wird gestartet</span>'])
     window.show()
+    app.processEvents()
+
+    threading.Thread(target=bootstrap_system, daemon=True).start()
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
     main()
-    
-
-
-
-
-
-
-
-            #     function updatePage(){
-            #     let InformationElements = [];
-            #     const checkElement = setInterval(() => {
-            #         InformationElements = iframeDocument.querySelectorAll('.data-list-body-cell.dataCell.labelValueCell');
-            #         if (InformationElements.length > 0) {
-            #             clearInterval(checkElement);
-
-            #             // The rest of your code runs here after the interval is finished
-            #             let extractedData = {};
-            #             let key;
-            #             let value;
-            #             let gehen;
-            #             InformationElements.forEach(function(InformationElement) {
-            #                 key = InformationElement.children[0].children[0].innerHTML;
-            #                 if (key === "Gehen") {
-            #                     gehen = InformationElement.children[0].children[2];
-            #                 }
-            #                 if (InformationElement.children[0].children[2].childElementCount > 0) {
-            #                     value = InformationElement.children[0].children[2].textContent;
-            #                 } else {
-            #                     value = InformationElement.children[0].children[2].innerHTML;
-            #                 }
-            #                 extractedData[key] = value;
-            #             });
-
-            #             const pause = extractedData["Heutige Pause"];
-            #             if (extractedData.Status === "Annwesend") {
-            #                 const [hours, minutes] = pause.split(":").map(Number);
-            #                 let pause2 = pause;
-            #                 if (GM_getValue('18+') === true) {
-            #                     if (minutes < 30 && hours < 0) {
-            #                         pause2 = "0:30";
-            #                     }
-            #                 } else {
-            #                     if (hours < 1) {
-            #                         pause2 = "1:00";
-            #                     }
-            #                 }
-            #                 gehen.innerHTML = addTimes(addTimes(extractedData.Kommen, '7:42'), pause2);
-            #             } else {
-            #                 const possibleOverrideSpots = iframeDocument.querySelectorAll('.data-list-body-cell-wrapper');
-            #                 const currentTime = getCurrentTime();
-            #                 gehen = "15:20";
-            #                 const currentPause = subtractTimes(currentTime, gehen);
-            #                 if (pause === "0:00") {
-            #                     possibleOverrideSpots[4].children[0].innerHTML = currentPause;
-            #                 } else {
-            #                     const newpause = addTimes(subtractTimes(currentTime, gehen), pause);
-            #                     possibleOverrideSpots[4].children[0].innerHTML = currentPause + " | " + newpause;
-            #                 }
-            #                 console.log(possibleOverrideSpots);
-            #             }
-            #         }
-            #     }, 1000);
-            # }
