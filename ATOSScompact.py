@@ -162,6 +162,8 @@ def robust_get(driver, url, retries=6, nonempty_timeout=2.0, wait_between=0.6):
 # )
 
 # Set global variables
+DEFAULT_SCREEN_HEIGHT = 768
+
 amstempeln = False
 stempelupdate = False
 loaded = False
@@ -177,6 +179,33 @@ antidesync_time = time.time()
 driver = None
 window = None
 screen = None
+
+
+def wait_for_primary_screen(app, timeout=30.0, poll=0.1):
+    """Wait until a display is ready so the Qt widgets do not crash on boot."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        scr = app.primaryScreen()
+        if scr and scr.size().height() > 0:
+            return scr
+        screens = QGuiApplication.screens()
+        if screens:
+            scr = screens[0]
+            if scr and scr.size().height() > 0:
+                return scr
+        app.processEvents()
+        time.sleep(poll)
+    return None
+
+
+def primary_screen_fallback():
+    """Return a usable screen object when primary screen is momentarily unavailable."""
+    scr = QGuiApplication.primaryScreen()
+    if scr is None:
+        screens = QGuiApplication.screens()
+        if screens:
+            scr = screens[0]
+    return scr
 
 def wait_for_process(process_name):
     while True:
@@ -667,7 +696,9 @@ def checkMinus(input_string):
 class Circle(QWidget):
     # Circle to display Anwesendheitsstatus
     def __init__(self, initial_state):
-        self.circle_height = int(screen.size().height() / 48)
+        base_screen = screen or primary_screen_fallback()
+        height_value = base_screen.size().height() if base_screen else DEFAULT_SCREEN_HEIGHT
+        self.circle_height = int(height_value / 48)
         super().__init__()
         self.color = QColor(Qt.green) if initial_state == "Anwesend" else QColor(Qt.red)
         self.setMinimumSize(int(self.circle_height * 1.2), self.circle_height)
@@ -723,11 +754,13 @@ class ClockInButton(QWidget):
         self.setLayout(layout)
         
     def adjustSize(self):
-        screen = QGuiApplication.primaryScreen()
-        size = screen.size()
+        screen_obj = primary_screen_fallback()
+        if not screen_obj:
+            return
+        size = screen_obj.size()
         height = int(size.height() / 48)
         button_width = int(size.width() / 19.2)
-        self.setGeometry(int(size.width() / 19.2), screen.geometry().topLeft().y() + height + 5, button_width, height)
+        self.setGeometry(int(size.width() / 19.2), screen_obj.geometry().topLeft().y() + height + 5, button_width, height)
 
 
 class Window(QWidget):
@@ -740,9 +773,21 @@ class Window(QWidget):
         for v in QGuiApplication.screens():
             v.geometryChanged.connect(self.adjustSize)
         self.setWindowTitle("ATOSS Compact")
-        size = screen.size()
+        screen_ref = screen or primary_screen_fallback()
+        top_y = 0
+        if screen_ref:
+            size = screen_ref.size()
+            top_y = screen_ref.geometry().topLeft().y()
+        else:
+            screens = QGuiApplication.screens()
+            if not screens:
+                raise RuntimeError("Kein Bildschirm verfügbar")
+            screen_obj = screens[0]
+            rect = screen_obj.geometry()
+            size = rect.size()
+            top_y = rect.top()
         height = int(size.height()/48)
-        self.setGeometry(int(size.width()/19.2), screen.geometry().topLeft().y(), height, height) #Position and size of the window
+        self.setGeometry(int(size.width()/19.2), top_y, height, height) #Position and size of the window
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.X11BypassWindowManagerHint)
         
         layout = QVBoxLayout()
@@ -791,18 +836,17 @@ class Window(QWidget):
 
     def adjustSize(self):
         while True:
-            if QGuiApplication.primaryScreen().availableGeometry().height() != 0:
+            screen_now = primary_screen_fallback()
+            if screen_now and screen_now.availableGeometry().height() != 0:
                 break
-            else:
-                time.sleep(0.1)
-                QApplication.processEvents()
+            time.sleep(0.1)
+            QApplication.processEvents()
 
-        screenNow = QGuiApplication.primaryScreen()  # Update the screen variable
-        size = screenNow.size()
+        size = screen_now.size()
         height = int(size.height() / 48)
         self.circle.circle_height = height
         self.label.setMinimumSize(int(height * 1.2), height)
-        self.setGeometry(int(size.width() / 19.2), screenNow.geometry().topLeft().y(), self.width(), height)  # Set y-coordinate to 0
+        self.setGeometry(int(size.width() / 19.2), screen_now.geometry().topLeft().y(), self.width(), height)  # Set y-coordinate to 0
         if self.clock_button:
             self.clock_button.adjustSize()
 
@@ -878,7 +922,9 @@ def main():
     # wait_for_process("ZSTray")
     # wait_after_boot()
 
-    wait_for_internet()
+    while not wait_for_internet():
+        print("Internet noch nicht bereit. Neuer Versuch in 5s.")
+        time.sleep(5)
 
         # Setup WebDriver
     seleniumwire_options = {
@@ -892,8 +938,9 @@ def main():
             s = Service(ChromeDriverManager().install())
             # pass seleniumwire_options here
             driver = webdriver.Chrome(service=s, options=chrome_options, seleniumwire_options=seleniumwire_options)
-        except WebDriverException:
-            pass
+        except (WebDriverException, Exception) as exc:
+            print(f"Fehler beim Starten von ChromeDriver: {exc}")
+            time.sleep(2)
     driver.response_interceptor = interceptor
     # Open the website
     if not robust_get(driver, 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'):
@@ -910,6 +957,16 @@ def main():
     setup_keybinds()
 
     app = QApplication(sys.argv)
+
+    screen_obj = wait_for_primary_screen(app)
+    if screen_obj is None:
+        print("Keine Anzeige gefunden. Warte auf Desktop...")
+        time.sleep(5)
+        screen_obj = wait_for_primary_screen(app, timeout=25.0)
+    if screen_obj is None:
+        print("Fehler: Desktop nicht bereit. Beende mich.")
+        sys.exit(1)
+    screen = screen_obj
 
     # Set the palette to a dark theme
     palette = QPalette()
