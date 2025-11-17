@@ -27,7 +27,6 @@ import gzip
 import io
 import logging
 import traceback
-from data_readiness import has_required_payload, missing_required_keys
 # silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
 logging.getLogger('seleniumwire').setLevel(logging.ERROR)
 logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
@@ -181,6 +180,36 @@ startup_begin = time.time()
 startup_logged = False
 startup_log_lock = threading.Lock()
 last_missing_required_keys = set()
+REQUIRED_DATA_KEYS = {
+    "Status",
+    "Heutige Anwesenheit",
+    "Heutige Pause",
+    "Kommen",
+    "Gehen",
+    "Arbeitszeitkonto",
+}
+
+
+def _normalize_required_keys(required_keys=None):
+    if required_keys is None:
+        return REQUIRED_DATA_KEYS
+    if isinstance(required_keys, set):
+        return required_keys
+    return set(required_keys)
+
+
+def has_required_payload(data, required_keys=None):
+    if not data:
+        return False
+    required = _normalize_required_keys(required_keys)
+    return required.issubset(data.keys())
+
+
+def missing_required_keys(data, required_keys=None):
+    required = _normalize_required_keys(required_keys)
+    if not data:
+        return set(required)
+    return required.difference(data.keys())
 
 
 def wait_for_primary_screen(app, timeout=30.0, poll=0.1):
