@@ -27,6 +27,7 @@ import gzip
 import io
 import logging
 import traceback
+from data_readiness import has_required_payload, missing_required_keys
 # silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
 logging.getLogger('seleniumwire').setLevel(logging.ERROR)
 logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
@@ -176,6 +177,10 @@ antidesync_time = time.time()
 driver = None
 window = None
 screen = None
+startup_begin = time.time()
+startup_logged = False
+startup_log_lock = threading.Lock()
+last_missing_required_keys = set()
 
 
 def wait_for_primary_screen(app, timeout=30.0, poll=0.1):
@@ -226,6 +231,17 @@ def setEmojiFontForText(text, emoji):
     if emoji:
         style += " font-family: 'notocoloremoji';"
     return f'<span style="{style}">{text}</span>'
+
+
+def log_startup_time():
+    """Print how long the app needed until data was shown (only once)."""
+    global startup_logged
+    with startup_log_lock:
+        if startup_logged:
+            return
+        startup_logged = True
+    elapsed = time.time() - startup_begin
+    print(f"Startup completed in {elapsed:.2f} seconds")
 
 def process_response(driver, request_id, timeout=5.0):
     """
@@ -324,7 +340,7 @@ def detectDesync():
 
 
 def interceptor(request, response):
-    global extracted_data, initialized, loaded, antidesync_time
+    global extracted_data, initialized, loaded, antidesync_time, last_missing_required_keys
 
     content_type = response.headers.get('Content-Type', '')
     content_encoding = response.headers.get('Content-Encoding', '')
@@ -352,14 +368,25 @@ def interceptor(request, response):
         info = extract_connections(body)
         if info:
             extracted_data.update(info)
-            if len(extracted_data) == 8:
+            if has_required_payload(extracted_data):
                 window.update_list(
                     extracted_data["Status"],
                     sortListAndCalculateAdditionalValues(extracted_data)
                 )
+                if not initialized:
+                    log_startup_time()
                 initialized = True
                 loaded = True
                 antidesync_time = time.time()
+                last_missing_required_keys = set()
+            elif debug:
+                missing = missing_required_keys(extracted_data)
+                if missing and missing != last_missing_required_keys:
+                    last_missing_required_keys = missing
+                    print(
+                        "[interceptor] Waiting for required fields: "
+                        + ", ".join(sorted(missing))
+                    )
 
 
 
@@ -861,7 +888,7 @@ def bootstrap_system():
     chrome_options.binary_location = "/usr/bin/google-chrome"
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
+    #chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--user-data-dir=selenium")
     chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
     if not debug:
@@ -869,7 +896,10 @@ def bootstrap_system():
 
     seleniumwire_options = {
         'ignore_hosts': ['127.0.0.1', 'localhost', '::1'],
-        'connection_timeout': None
+        'connection_timeout': None,
+        'mitmproxy_options': {
+            'http2': False
+        }
     }
 
     update_label_from_thread(window.label, "Programm wird gestartet   |   Starte Browser...")
