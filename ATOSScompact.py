@@ -26,6 +26,7 @@ import json
 import gzip
 import io
 import logging
+import traceback
 # silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
 logging.getLogger('seleniumwire').setLevel(logging.ERROR)
 logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
@@ -857,6 +858,10 @@ def bootstrap_system():
         time.sleep(5)
 
     chrome_options = Options()
+    chrome_options.binary_location = "/usr/bin/google-chrome"
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--user-data-dir=selenium")
     chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
     if not debug:
@@ -874,7 +879,8 @@ def bootstrap_system():
             driver = webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
             break
         except (WebDriverException, Exception) as exc:
-            print(f"Fehler beim Starten von ChromeDriver: {exc}")
+            print("Fehler beim Starten von ChromeDriver:")
+            traceback.print_exc()
             time.sleep(2)
 
     driver.response_interceptor = interceptor
