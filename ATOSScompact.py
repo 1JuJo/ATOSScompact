@@ -1,5 +1,4 @@
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning, module="seleniumwire")
 from selenium import webdriver
 from selenium.common.exceptions import NoAlertPresentException, NoSuchElementException, WebDriverException,TimeoutException,UnexpectedAlertPresentException,StaleElementReferenceException
 from selenium.webdriver.chrome.service import Service
@@ -12,7 +11,6 @@ from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLa
 from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplication
 from PyQt5.QtCore import Qt, QTimer, QPoint, QTime, QMetaObject, Q_ARG
 from datetime import datetime, timedelta
-from seleniumwire import webdriver
 from pynput import keyboard
 import argparse
 import psutil
@@ -28,10 +26,6 @@ import io
 import logging
 import traceback
 import signal
-# silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
-logging.getLogger('seleniumwire').setLevel(logging.ERROR)
-logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
-logging.getLogger('mitmproxy').setLevel(logging.ERROR)
 
 parser = argparse.ArgumentParser(
     description="Skript mit optionalem Debug-Modus ausführen"
@@ -395,54 +389,79 @@ def detectDesync():
         driver.quit()
 
 
-def interceptor(request, response):
+def monitor_network(driver, window):
     global extracted_data, initialized, loaded, antidesync_time, last_missing_required_keys
-
-    content_type = response.headers.get('Content-Type', '')
-    content_encoding = response.headers.get('Content-Encoding', '')
-
-    if (response.status_code == 200
-        and content_type.startswith('text/plain')
-        and 'zkauA10' in request.url):
-
-        # Check for gzip compression
-        if content_encoding == 'gzip':
-            try:
-                body_bytes = gzip.GzipFile(fileobj=io.BytesIO(response.body)).read()
-                body = body_bytes.decode('utf-8')
-            except Exception as e:
-                print(f"Failed to decompress gzipped response: {e}")
-                return
-        else:
-            try:
-                body = response.body.decode('utf-8')
-            except Exception as e:
-                print(f"Failed to decode response body: {e}")
-                return
-
-        # Now parse/extract as before
-        info = extract_connections(body)
-        if info:
-            extracted_data.update(info)
-            if has_required_payload(extracted_data):
-                window.update_list(
-                    extracted_data["Status"],
-                    sortListAndCalculateAdditionalValues(extracted_data)
-                )
-                if not initialized:
-                    log_startup_time()
-                initialized = True
-                loaded = True
-                antidesync_time = time.time()
-                last_missing_required_keys = set()
-            elif debug:
-                missing = missing_required_keys(extracted_data)
-                if missing and missing != last_missing_required_keys:
-                    last_missing_required_keys = missing
-                    print(
-                        "[interceptor] Waiting for required fields: "
-                        + ", ".join(sorted(missing))
-                    )
+    
+    interesting_requests = {} # requestId -> url
+    
+    while True:
+        if driver is None:
+            time.sleep(1)
+            continue
+            
+        try:
+            logs = driver.get_log('performance')
+            for entry in logs:
+                try:
+                    message = json.loads(entry['message'])['message']
+                    method = message['method']
+                    params = message['params']
+                    
+                    if method == 'Network.responseReceived':
+                        response = params['response']
+                        url = response['url']
+                        if 'zkauA10' in url and response['status'] == 200:
+                            if response.get('mimeType', '').startswith('text/plain'):
+                                interesting_requests[params['requestId']] = url
+                                
+                    elif method == 'Network.loadingFinished':
+                        req_id = params['requestId']
+                        if req_id in interesting_requests:
+                            # Fetch body
+                            try:
+                                res = driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': req_id})
+                                body = res['body']
+                                # CDP returns body as string. If base64Encoded is true, it is base64.
+                                if res.get('base64Encoded', False):
+                                    import base64
+                                    body = base64.b64decode(body).decode('utf-8')
+                                
+                                # Now process it
+                                info = extract_connections(body)
+                                if info:
+                                    extracted_data.update(info)
+                                    if has_required_payload(extracted_data):
+                                        window.update_list(
+                                            extracted_data["Status"],
+                                            sortListAndCalculateAdditionalValues(extracted_data)
+                                        )
+                                        if not initialized:
+                                            log_startup_time()
+                                        initialized = True
+                                        loaded = True
+                                        antidesync_time = time.time()
+                                        last_missing_required_keys = set()
+                                    elif debug:
+                                        missing = missing_required_keys(extracted_data)
+                                        if missing and missing != last_missing_required_keys:
+                                            last_missing_required_keys = missing
+                                            print(
+                                                "[monitor] Waiting for required fields: "
+                                                + ", ".join(sorted(missing))
+                                            )
+                            except Exception as e:
+                                if debug:
+                                    print(f"Error fetching body for {interesting_requests[req_id]}: {e}")
+                            
+                            # Clean up
+                            del interesting_requests[req_id]
+                            
+                except Exception:
+                    pass
+        except Exception:
+            pass
+            
+        time.sleep(0.2)
 
 
 
@@ -516,7 +535,8 @@ def enterFrame():
     try:
         # Check if the body has the class "neterror"
         if 'neterror' in body.get_attribute('class').split():
-            return False
+            reload()
+            return enterFrame()
         iframe = driver.find_element(By.TAG_NAME, 'iframe')
         driver.switch_to.frame(iframe)
         return True
@@ -944,38 +964,31 @@ def bootstrap_system():
     chrome_options.binary_location = "/usr/bin/google-chrome"
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    #chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--ignore-ssl-errors")
     chrome_options.add_argument("--user-data-dir=selenium")
     chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
     if not debug:
         chrome_options.add_argument("--headless")
 
-    seleniumwire_options = {
-        'ignore_hosts': ['127.0.0.1', 'localhost', '::1'],
-        'connection_timeout': None,
-        'mitmproxy_options': {
-            'http2': False
-        }
-    }
-
     update_label_from_thread(window.label, "Programm wird gestartet   |   Starte Browser...")
     while True:
         try:
             service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options, seleniumwire_options=seleniumwire_options)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
             break
         except (WebDriverException, Exception) as exc:
             print("Fehler beim Starten von ChromeDriver:")
             traceback.print_exc()
             time.sleep(2)
 
-    driver.response_interceptor = interceptor
-
     update_label_from_thread(window.label, "Programm wird gestartet   |   Lade ATOSS...")
     if not robust_get(driver, 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'):
         update_label_from_thread(window.label, "Fehler beim Laden der ATOSS Seite")
         return
 
+    threading.Thread(target=monitor_network, args=(driver, window), daemon=True).start()
     threading.Thread(target=detectDesync, daemon=True).start()
     setup_keybinds()
     update_label_from_thread(window.label, "ATOSS geladen   |   Warte auf Daten...")
