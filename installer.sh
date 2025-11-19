@@ -304,7 +304,7 @@ configure_autostart() {
     cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -lc "${runner_cmd}; exec bash"
+Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "${runner_cmd}; exec bash"
 Icon=${icon_path}
 Hidden=false
 NoDisplay=false
