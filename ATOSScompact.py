@@ -27,6 +27,7 @@ import gzip
 import io
 import logging
 import traceback
+import signal
 # silence selenium-wire / mitmproxy noisy tracebacks unless it's an actual error
 logging.getLogger('seleniumwire').setLevel(logging.ERROR)
 logging.getLogger('seleniumwire.thirdparty.mitmproxy').setLevel(logging.ERROR)
@@ -272,6 +273,30 @@ def log_startup_time():
     elapsed = time.time() - startup_begin
     print(f"Startup completed in {elapsed:.2f} seconds")
 
+
+def close_driver():
+    """Shut down the webdriver if it is still active."""
+    global driver
+    if driver is None:
+        return
+    try:
+        driver.quit()
+    except Exception:
+        traceback.print_exc()
+    finally:
+        driver = None
+
+
+def handle_sigint(signum, frame):
+    """Make Ctrl+C close the Qt event loop and browser."""
+    print("Ctrl+C detected – exiting…")
+    close_driver()
+    app = QApplication.instance()
+    if app is not None:
+        app.quit()
+    else:
+        sys.exit(130)
+
 def process_response(driver, request_id, timeout=5.0):
     """
     Get response body for a specific request, retrying
@@ -361,6 +386,8 @@ def detectDesync():
             if loaded and time.time() - antidesync_time > 65:
                 print(f"{time.strftime('%H:%M:%S')} | Desync detected; reloading page.")
                 loaded = False
+                if driver is None:
+                    break
                 driver.get(driver.current_url)
                 antidesync_time = time.time()
             time.sleep(1)
@@ -957,6 +984,15 @@ def main():
     global  window, screen,driver,debug,initialized
 
     app = QApplication(sys.argv)
+    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGTERM, handle_sigint)
+
+    pulse_timer = QTimer()
+    pulse_timer.start(250)
+    pulse_timer.timeout.connect(lambda: None)
+    app._signal_pulse = pulse_timer
+
+    app.aboutToQuit.connect(close_driver)
 
     screen_obj = wait_for_primary_screen(app)
     if screen_obj is None:
