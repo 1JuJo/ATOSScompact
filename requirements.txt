@@ -2,7 +2,6 @@
 psutil==6.0.0
 pynput==1.7.7
 selenium==4.19.0
-selenium-wire==5.1.0
 webdriver-manager==4.0.2
 PyQt5==5.15.11
 PyQt5-Qt5==5.15.17
