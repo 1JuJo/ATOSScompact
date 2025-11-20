@@ -275,7 +275,7 @@ PYTHON="$VENV/bin/python3"
 LOG_FILE="$APP_DIR/ATOSScompact.log"
 
 touch "$LOG_FILE"
-exec >> "$LOG_FILE" 2>&1
+exec > >(tee -a "$LOG_FILE") 2>&1
 printf '\n[%s] Starting ATOSScompact...\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 
 if command -v git >/dev/null 2>&1 && [[ -d "$APP_DIR/.git" ]]; then
