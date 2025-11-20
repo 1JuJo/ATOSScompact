@@ -101,12 +101,24 @@ def robust_get(driver, url, retries=6, nonempty_timeout=2.0, wait_between=0.6):
     - nonempty_timeout: wie lange wir direkt auf non-empty body warten (kleiner Wert sorgt für schnelle retries)
     - retries: wie oft wir versuchen bevor wir aufgeben
     """
+    try:
+        driver.set_page_load_timeout(10)
+    except Exception:
+        pass
+
     for attempt in range(1, retries + 1):
         try:
+            print(f"[robust_get] Attempt {attempt}: Loading {url}")
             driver.get(url)
-        except WebDriverException:
+        except TimeoutException:
+            print(f"[robust_get] Timeout loading page (attempt {attempt})")
+            try:
+                driver.execute_script("window.stop();")
+            except Exception:
+                pass
+        except WebDriverException as e:
             # falls kurzfristig Navigation fehlschlägt, versuchen wir gleich wieder
-            print(f"[robust_get] driver.get() raised, attempt {attempt}")
+            print(f"[robust_get] driver.get() raised {type(e).__name__}, attempt {attempt}")
             time.sleep(wait_between)
             continue
 
@@ -117,8 +129,8 @@ def robust_get(driver, url, retries=6, nonempty_timeout=2.0, wait_between=0.6):
             # kurze zusätzliche Prüfung: falls chrome-error-URL geladen wurde:
             try:
                 cur = driver.current_url
-                if cur and cur.startswith("chrome-error://"):
-                    print(f"[robust_get] chrome-error URL erkannt ({cur}), retrying")
+                if cur and (cur.startswith("chrome-error://") or cur == "data:," or cur == "about:blank"):
+                    print(f"[robust_get] Invalid URL detected ({cur}), retrying")
                     continue
             except Exception:
                 pass
