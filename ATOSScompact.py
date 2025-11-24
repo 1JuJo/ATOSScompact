@@ -390,6 +390,28 @@ class BrowserController(QObject):
             except OSError:
                 time.sleep(2)
 
+    def _clean_stale_locks(self, user_data_dir):
+        try:
+            lock_file = os.path.join(user_data_dir, "SingletonLock")
+            if os.path.islink(lock_file):
+                target = os.readlink(lock_file)
+                # target format: hostname-pid
+                pid_str = target.split("-")[-1]
+                if pid_str.isdigit():
+                    pid = int(pid_str)
+                    if not psutil.pid_exists(pid):
+                        logger.info(f"Removing stale lock file: {lock_file} (PID {pid} not found)")
+                        os.unlink(lock_file)
+                        for name in ["SingletonCookie", "SingletonSocket"]:
+                            p = os.path.join(user_data_dir, name)
+                            if os.path.exists(p) or os.path.islink(p):
+                                try:
+                                    os.unlink(p)
+                                except OSError:
+                                    pass
+        except Exception as e:
+            logger.warning(f"Failed to clean locks: {e}")
+
     def _init_driver(self):
         opts = Options()
         opts.binary_location = "/usr/bin/google-chrome"
@@ -401,6 +423,8 @@ class BrowserController(QObject):
         
         base_path = os.path.dirname(os.path.abspath(__file__))
         selenium_path = os.path.join(base_path, "selenium")
+        
+        self._clean_stale_locks(selenium_path)
         opts.add_argument(f"--user-data-dir={selenium_path}")
         
         opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
