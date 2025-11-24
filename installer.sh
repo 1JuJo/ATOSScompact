@@ -215,9 +215,8 @@ clone_or_sync_repo() {
         log "Updating existing repository in $INSTALL_DIR"
         git -C "$INSTALL_DIR" fetch --all --prune
         git -C "$INSTALL_DIR" checkout "$REPO_BRANCH"
-        if ! git -C "$INSTALL_DIR" pull --ff-only origin "$REPO_BRANCH"; then
-            log "Fast-forward pull failed; attempting rebase"
-            git -C "$INSTALL_DIR" pull --rebase origin "$REPO_BRANCH" || log "Warning: Unable to fast-forward automatically."
+        if ! git -C "$INSTALL_DIR" pull --rebase --autostash origin "$REPO_BRANCH"; then
+            log "Warning: git pull failed. Please resolve manually."
         fi
         return
     fi
@@ -279,8 +278,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 printf '\n[%s] Starting ATOSScompact...\n' "$(date '+%Y-%m-%d %H:%M:%S')"
 
 if command -v git >/dev/null 2>&1 && [[ -d "$APP_DIR/.git" ]]; then
-    if ! git -C "$APP_DIR" pull --ff-only; then
-        echo "[WARN] git pull failed (non fast-forward). Please resolve manually." >&2
+    if ! git -C "$APP_DIR" pull --rebase --autostash; then
+        echo "[WARN] git pull failed. Please resolve manually." >&2
     fi
 fi
 
