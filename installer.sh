@@ -289,7 +289,8 @@ if [[ ! -x "$PYTHON" ]]; then
     exit 1
 fi
 
-exec "$PYTHON" "$APP_DIR/ATOSScompact.py" "$@"
+cd "$APP_DIR"
+exec "$PYTHON" "ATOSScompact.py" "$@"
 EOF
     chmod +x "$RUNNER_PATH"
 }

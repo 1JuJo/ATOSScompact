@@ -1,4 +1,5 @@
 import sys
+import os
 import time
 import json
 import threading
@@ -397,7 +398,11 @@ class BrowserController(QObject):
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--ignore-certificate-errors")
         opts.add_argument("--ignore-ssl-errors")
-        opts.add_argument("--user-data-dir=selenium")
+        
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        selenium_path = os.path.join(base_path, "selenium")
+        opts.add_argument(f"--user-data-dir={selenium_path}")
+        
         opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
         if not self.debug:
             opts.add_argument("--headless")
