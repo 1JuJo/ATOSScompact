@@ -9,6 +9,7 @@ SCRIPT_PATH="$(realpath "$0")"
 INSTALL_DIR="$(dirname "$SCRIPT_PATH")"
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 DESKTOP_FILE="$AUTOSTART_DIR/${APP_NAME}.desktop"
+SYSTEM_DESKTOP_FILE="/usr/share/applications/${APP_NAME}.desktop"
 RUNNER_PATH="$INSTALL_DIR/run_${APP_NAME}.sh"
 VENV_PATH="$INSTALL_DIR/.venv"
 APT_UPDATED=0
@@ -293,6 +294,33 @@ EOF
     chmod +x "$RUNNER_PATH"
 }
 
+install_system_desktop_entry() {
+    log "Installing system-wide desktop entry at $SYSTEM_DESKTOP_FILE"
+    local icon_path
+    icon_path="$(choose_icon)"
+    local runner_cmd
+    runner_cmd=$(printf '%q' "$RUNNER_PATH")
+    
+    local tmp_file
+    tmp_file=$(mktemp)
+    
+    cat > "$tmp_file" <<EOF
+[Desktop Entry]
+Type=Application
+Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "${runner_cmd}; exec bash"
+Icon=${icon_path}
+Hidden=false
+NoDisplay=false
+Name=${APP_NAME}
+Comment=Run ${APP_NAME}
+StartupWMClass=${APP_NAME}
+Categories=Utility;Application;
+EOF
+
+    run_root mv "$tmp_file" "$SYSTEM_DESKTOP_FILE"
+    run_root chmod 644 "$SYSTEM_DESKTOP_FILE"
+}
+
 configure_autostart() {
     log "Updating autostart entry at $DESKTOP_FILE"
     mkdir -p "$AUTOSTART_DIR"
@@ -333,6 +361,7 @@ main() {
     setup_python_env
     create_runner_script
     configure_autostart
+    install_system_desktop_entry
     launch_initial_debug_run
     log "${APP_NAME} installation complete."
 }
