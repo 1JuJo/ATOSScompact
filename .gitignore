@@ -8,3 +8,4 @@ python-3.8.10-amd64.exe
 ATOSScompact_Icon_new.ico
 .gitignore
 run_ATOSScompact.sh
+ATOSScompact.log
