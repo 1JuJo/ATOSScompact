@@ -298,8 +298,6 @@ install_system_desktop_entry() {
     log "Installing system-wide desktop entry at $SYSTEM_DESKTOP_FILE"
     local icon_path
     icon_path="$(choose_icon)"
-    local runner_cmd
-    runner_cmd=$(printf '%q' "$RUNNER_PATH")
     
     local tmp_file
     tmp_file=$(mktemp)
@@ -307,7 +305,7 @@ install_system_desktop_entry() {
     cat > "$tmp_file" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "${runner_cmd}; exec bash"
+Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "'${RUNNER_PATH}'; exec bash"
 Icon=${icon_path}
 Hidden=false
 NoDisplay=false
@@ -326,12 +324,10 @@ configure_autostart() {
     mkdir -p "$AUTOSTART_DIR"
     local icon_path
     icon_path="$(choose_icon)"
-    local runner_cmd
-    runner_cmd=$(printf '%q' "$RUNNER_PATH")
     cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "${runner_cmd}; exec bash"
+Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "'${RUNNER_PATH}'; exec bash"
 Icon=${icon_path}
 Hidden=false
 NoDisplay=false
