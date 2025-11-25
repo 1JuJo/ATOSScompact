@@ -373,13 +373,16 @@ class BrowserController(QObject):
         self.update_msg.emit("Starte Browser...")
         self._init_driver()
         
-        self.update_msg.emit("Lade ATOSS...")
-        if self._load_page():
-            threading.Thread(target=self._monitor_network, daemon=True).start()
-            threading.Thread(target=self._watchdog, daemon=True).start()
-            self.update_msg.emit("ATOSS geladen | Warte auf Daten...")
-        else:
-            self.update_msg.emit("Fehler beim Laden der Seite")
+        while self.running:
+            self.update_msg.emit("Lade ATOSS...")
+            if self._load_page():
+                threading.Thread(target=self._monitor_network, daemon=True).start()
+                threading.Thread(target=self._watchdog, daemon=True).start()
+                self.update_msg.emit("ATOSS geladen | Warte auf Daten...")
+                break
+            
+            self.update_msg.emit("Fehler beim Laden. Neuer Versuch in 100ms...")
+            time.sleep(0.1)
 
     def _wait_for_internet(self, host="8.8.8.8", port=53, timeout=5):
         while self.running:
@@ -448,6 +451,14 @@ class BrowserController(QObject):
         for attempt in range(1, retries + 1):
             try:
                 self.driver.get(url)
+                
+                # Check for error page content
+                try:
+                    if "ERR_" in self.driver.page_source:
+                        raise WebDriverException("Network error page detected")
+                except Exception:
+                    pass
+
                 # Simple wait for body
                 WebDriverWait(self.driver, 5).until(
                     lambda d: d.execute_script("return document.body && document.body.childElementCount > 0")
