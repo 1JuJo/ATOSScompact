@@ -636,7 +636,10 @@ class BrowserController(QObject):
                 self.loaded = False
                 with self.driver_lock:
                     if self.driver:
-                        self.driver.get(self.driver.current_url)
+                        try:
+                            self.driver.get(self.driver.current_url)
+                        except Exception as e:
+                            logger.error(f"Watchdog reload failed. Browser session closed?: {e}")
                 self.antidesync_time = time.time()
             time.sleep(1)
 
