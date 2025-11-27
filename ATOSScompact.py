@@ -531,6 +531,7 @@ class BrowserController(QObject):
             return False
 
     def _reload_page(self):
+        self.loaded = False
         try:
             self.update_msg.emit(self.extracted_data.get("Status", "Abwesend") + " ⟳")
             self.driver.refresh()
@@ -546,72 +547,95 @@ class BrowserController(QObject):
         self.amstempeln = True
         
         action_name = "Pause" if is_break else "Anwesenheitsbeginn"
-        self.update_msg.emit(f"Versuch {action_name} zu Stempeln")
         
-        with self.driver_lock:
-            if not self.driver:
+        while self.running:
+            if not self.loaded:
+                self.update_msg.emit(f"Warte auf Seite für {action_name}...")
+                while not self.loaded and self.running:
+                    time.sleep(0.2)
+            
+            if not self.running:
                 self.amstempeln = False
                 return
 
-            if not self._enter_frame():
-                self.amstempeln = False
-                return
+            with self.driver_lock:
+                if not self.loaded:
+                    continue
 
-            try:
-                # Try to find title elements (submenu) directly first
-                found_submenu = False
+                if not self.driver:
+                    self.amstempeln = False
+                    return
+
+                self.update_msg.emit(f"Versuch {action_name} zu Stempeln")
+
+                if not self._enter_frame():
+                    continue
+
                 try:
-                    titles = WebDriverWait(self.driver, 2).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-                    )
-                    for title in titles:
-                        if title.text.startswith(action_name):
-                            self._perform_click(title, action_name, is_break)
-                            found_submenu = True
-                            break
-                except TimeoutException:
-                    pass
+                    # Try to find title elements (submenu) directly first
+                    found_submenu = False
+                    try:
+                        titles = WebDriverWait(self.driver, 2).until(
+                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
+                        )
+                        for title in titles:
+                            if title.text.startswith(action_name):
+                                self._perform_click(title, action_name, is_break)
+                                found_submenu = True
+                                break
+                    except TimeoutException:
+                        pass
 
-                if found_submenu:
+                    if found_submenu:
+                        self.driver.switch_to.default_content()
+                        self.amstempeln = False
+                        return
+
+                    # Find action items (main menu)
+                    elements = WebDriverWait(self.driver, 5).until(
+                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
+                    )
+                    
+                    clicked_action = False
+                    for el in elements:
+                        if "Zeiterfassung (Kommen" in el.text:
+                            el.click()
+                            clicked_action = True
+                            break
+                    
+                    if clicked_action:
+                        # Wait for info buttons
+                        WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
+                        )
+                        
+                        # Find title element
+                        titles = WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
+                        )
+                        
+                        for title in titles:
+                            if title.text.startswith(action_name):
+                                self._perform_click(title, action_name, is_break)
+                                break
+                                
                     self.driver.switch_to.default_content()
                     self.amstempeln = False
                     return
 
-                # Find action items (main menu)
-                elements = WebDriverWait(self.driver, 5).until(
-                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
-                )
-                
-                clicked_action = False
-                for el in elements:
-                    if "Zeiterfassung (Kommen" in el.text:
-                        el.click()
-                        clicked_action = True
-                        break
-                
-                if clicked_action:
-                    # Wait for info buttons
-                    WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
-                    )
-                    
-                    # Find title element
-                    titles = WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-                    )
-                    
-                    for title in titles:
-                        if title.text.startswith(action_name):
-                            self._perform_click(title, action_name, is_break)
-                            break
-                            
-                self.driver.switch_to.default_content()
+                except StaleElementReferenceException:
+                    logger.warning("Stale element detected during stempeln, retrying...")
+                    try:
+                        self.driver.switch_to.default_content()
+                    except Exception:
+                        pass
+                    continue
 
-            except Exception as e:
-                logger.error(f"Stempeln failed: {e}")
-                self.update_msg.emit("Fehler beim Stempeln")
-            finally:
-                self.amstempeln = False
+                except Exception as e:
+                    logger.error(f"Stempeln failed: {e}")
+                    self.update_msg.emit("Fehler beim Stempeln")
+                    self.amstempeln = False
+                    return
 
     def _perform_click(self, element, action_name, is_break):
         current_status = self.extracted_data.get("Status", "Abwesend")
