@@ -384,14 +384,19 @@ class BrowserController(QObject):
             self.update_msg.emit("Fehler beim Laden. Neuer Versuch in 100ms...")
             time.sleep(0.1)
 
-    def _wait_for_internet(self, host="8.8.8.8", port=53, timeout=5):
+    def _wait_for_internet(self, timeout=5):
+        hosts = [("8.8.8.8", 53), ("1.1.1.1", 53), ("208.67.222.222", 53), ("google.com", 80)]
         while self.running:
-            try:
-                socket.setdefaulttimeout(timeout)
-                socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
-                return
-            except OSError:
-                time.sleep(2)
+            for host, port in hosts:
+                try:
+                    socket.setdefaulttimeout(timeout)
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.connect((host, port))
+                    s.close()
+                    return
+                except OSError:
+                    continue
+            time.sleep(2)
 
     def _clean_stale_locks(self, user_data_dir):
         try:
@@ -402,6 +407,20 @@ class BrowserController(QObject):
                 pid_str = target.split("-")[-1]
                 if pid_str.isdigit():
                     pid = int(pid_str)
+                    
+                    if psutil.pid_exists(pid):
+                        try:
+                            proc = psutil.Process(pid)
+                            if "chrome" in proc.name().lower() or "chromium" in proc.name().lower():
+                                logger.warning(f"Found orphaned Chrome process {pid}. Killing it.")
+                                proc.kill()
+                                try:
+                                    proc.wait(timeout=3)
+                                except psutil.TimeoutExpired:
+                                    pass
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+
                     if not psutil.pid_exists(pid):
                         logger.info(f"Removing stale lock file: {lock_file} (PID {pid} not found)")
                         os.unlink(lock_file)
@@ -417,7 +436,20 @@ class BrowserController(QObject):
 
     def _init_driver(self):
         opts = Options()
-        opts.binary_location = "/usr/bin/google-chrome"
+        
+        chrome_bins = ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
+        found_bin = None
+        for bin_path in chrome_bins:
+            if os.path.exists(bin_path):
+                found_bin = bin_path
+                break
+        
+        if found_bin:
+            opts.binary_location = found_bin
+            logger.info(f"Using Chrome binary at: {found_bin}")
+        else:
+            logger.warning("No Chrome binary found in standard locations. Letting Selenium decide.")
+
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
@@ -437,6 +469,7 @@ class BrowserController(QObject):
         try:
             with self.driver_lock:
                 self.driver = webdriver.Chrome(options=opts)
+                self.driver.set_page_load_timeout(30)
         except Exception as e:
             logger.error(f"Driver init failed: {e}")
             traceback.print_exc()
@@ -453,11 +486,9 @@ class BrowserController(QObject):
                 self.driver.get(url)
                 
                 # Check for error page content
-                try:
-                    if "ERR_" in self.driver.page_source:
-                        raise WebDriverException("Network error page detected")
-                except Exception:
-                    pass
+                src = self.driver.page_source
+                if "ERR_" in src or "neterror" in src:
+                    raise WebDriverException("Network error page detected")
 
                 # Simple wait for body
                 WebDriverWait(self.driver, 5).until(
