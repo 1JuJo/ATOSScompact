@@ -490,13 +490,26 @@ class BrowserController(QObject):
                 if "ERR_" in src or "neterror" in src:
                     raise WebDriverException("Network error page detected")
 
-                # Simple wait for body
-                WebDriverWait(self.driver, 5).until(
-                    lambda d: d.execute_script("return document.body && document.body.childElementCount > 0")
+                # Wait for iframe and its content to load
+                WebDriverWait(self.driver, 15).until(
+                    EC.presence_of_element_located((By.ID, "applicationIframe"))
                 )
+                iframe = self.driver.find_element(By.ID, "applicationIframe")
+                self.driver.switch_to.frame(iframe)
+                try:
+                    WebDriverWait(self.driver, 15).until(
+                        lambda d: d.execute_script("return document.body && document.body.querySelectorAll('*').length > 20")
+                    )
+                finally:
+                    self.driver.switch_to.default_content()
+                
                 return True
             except Exception as e:
                 logger.warning(f"Load attempt {attempt} failed: {e}")
+                try:
+                    self.driver.switch_to.default_content()
+                except Exception:
+                    pass
                 time.sleep(1)
         return False
 
