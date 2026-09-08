@@ -1,41 +1,46 @@
 # ATOSScompact
 
+A small ATOSS attendance overlay for Ubuntu/X11. Reads the current Staff Center dashboard and supports the time-recording menu.
+
 ## Installation
 
-The project ships with an unattended installer (`installer.sh`) that prepares a fresh Ubuntu workstation, clones the repo, builds the virtual environment, and registers an autostart entry that launches `run_ATOSScompact.sh` (which in turn performs a `git pull` before every start).
-
-1. Create an empty directory on the target machine (for example `~/ATOSScompact`).
-2. Copy `installer.sh` into that directory and make it executable.
-3. (Optional) Export `REPO_URL`/`REPO_BRANCH` if you want to point at a different remote than the default placeholder.
-4. Run the installer; it will ask for sudo once to install `apt` dependencies and Google Chrome.
+Copy `installer.sh` into the installation directory, make it executable, and run it as your desktop user:
 
 ```bash
-mkdir -p ~/ATOSScompact
-cp /path/to/installer.sh ~/ATOSScompact/
-cd ~/ATOSScompact
 chmod +x installer.sh
 ./installer.sh
 ```
 
-### What the installer does
+The installer installs Ubuntu packages and Chrome, clones branch `18+` from `https://github.com/1JuJo/ATOSScompact.git`, prepares `.venv`, generates `run_ATOSScompact.sh`, and creates per-user application and autostart entries. The first debug launch uses **read-only mode** so you can log in and check the overlay without clocking.
 
-- Installs foundational packages: `git`, `python3-venv`, build tools, GNOME desktop helpers, emoji fonts, and the libraries PyQt5/Chrome need.
-- Downloads Google Chrome directly from Google if it is not present yet.
-- Clones (or updates) the configured Git repository into the directory where the installer resides, preserving the `.git` folder so subsequent launches can `git pull`.
-- Sets up `.venv` and installs everything from `requirements.txt`.
-- Generates `run_ATOSScompact.sh`, which logs output to `ATOSScompact.log` and performs a safe `git pull` before starting `ATOSScompact.py`.
-- Creates `~/.config/autostart/ATOSScompact.desktop` so GNOME automatically starts the app in a terminal window on login.
-- Launches `run_ATOSScompact.sh --debug` once after setup so you can immediately verify that the UI is working.
-
-## Manual usage
-
-`run_ATOSScompact.sh` is the launch script used by the autostart entry. You can also invoke it manually:
+For an existing checkout with local changes:
 
 ```bash
-./run_ATOSScompact.sh          # headless Chrome (default)
-./run_ATOSScompact.sh --debug  # show Chrome/UI for troubleshooting
+./installer.sh --skip-clone --skip-launch
 ```
 
-All additional arguments are forwarded to `ATOSScompact.py`, so `./run_ATOSScompact.sh --debug --foo bar` behaves the same as running the Python file directly. Logs always end up in `ATOSScompact.log` regardless of where the script is invoked from.
+Options: `--repo-url URL`, `--branch NAME`, `--skip-clone`, `--skip-launch`, and `--non-interactive` (also skips launching). Without `--skip-clone`, installer updates require a clean checkout and a fast-forward merge.
 
-If something goes wrong (for example, a `git pull` cannot fast-forward), check `ATOSScompact.log` or rerun `installer.sh` to remediate.
+## Running
+
+```bash
+./run_ATOSScompact.sh                      # normal use, headless Chrome
+./run_ATOSScompact.sh --debug              # visible Chrome for login/troubleshooting
+./run_ATOSScompact.sh --debug --read-only  # all attendance actions and hotkeys disabled
+```
+
+The runner automatically pulls the current branch's GitHub upstream before each start (`git pull --ff-only`), then installs its runtime requirements. Git failures or a 30-second timeout produce a warning and continue with the local checkout. The runner works from any directory, prevents duplicate launches, and logs to `ATOSScompact.log`. The Chrome login profile stays in `selenium/`.
+
+In normal mode, **Alt+Q+K** or the **Einstempeln** button clocks in; **Alt+Q+G** clocks out / starts a break. These actions affect the real account. Clocking uses the current page status and is submitted once. If ATOSS does not confirm the change, further clocking stays blocked until confirmation arrives; check ATOSS before restarting to try again.
+
+The overlay reads complete dashboard snapshots, removes invisible characters from balances, and supports signed balances exceeding 24 hours. It reconnects after browser/network failures, refreshes stalled attendance data, and shows a grey indicator while data is unavailable. The existing time targets and break calculations are retained.
+
+Global hotkeys require X11. Read-only mode does not start a keyboard listener. If login expires, use `--debug --read-only` to log in again.
+
+## Offline regression check
+
+```bash
+.venv/bin/python test_atoss.py
+```
+
+Uses fake browser controls and temporary installer output. Covers time calculations, partial data, browser/DNS recovery, stale data, clocking confirmation and duplicate prevention, read-only mode, launcher arguments, auto-update success/failure, dependency installation, and desktop entries. It never opens a real browser or submits attendance.

@@ -1,33 +1,29 @@
 import sys
 import os
 import time
-import json
 import threading
 import signal
-import traceback
 import argparse
-import socket
 import re
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Set, Tuple
+from html import escape
+from typing import Dict, Any
 
 import psutil
-from pynput import keyboard
 
 from PyQt5.QtWidgets import QApplication, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QPushButton
 from PyQt5.QtGui import QPainter, QBrush, QPen, QColor, QPalette, QGuiApplication
-from PyQt5.QtCore import Qt, QTimer, QMetaObject, Q_ARG, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
 
 from selenium import webdriver
 from selenium.common.exceptions import (
-    NoAlertPresentException, NoSuchElementException, WebDriverException,
-    TimeoutException, UnexpectedAlertPresentException, StaleElementReferenceException
+    NoSuchElementException, WebDriverException, TimeoutException, StaleElementReferenceException
 )
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from urllib3.exceptions import HTTPError
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -41,161 +37,58 @@ REQUIRED_DATA_KEYS = {
 
 class TimeUtils:
     @staticmethod
+    def to_minutes(value: str) -> int:
+        value = value.replace("\u200b", "").replace("\\u200B", "").replace("−", "-").strip()
+        match = re.fullmatch(r"([+-]?)(\d+):([0-5]\d)", value)
+        if not match:
+            raise ValueError(f"Invalid time: {value!r}")
+        sign, hours, minutes = match.groups()
+        return (-1 if sign == "-" else 1) * (int(hours) * 60 + int(minutes))
+
+    @staticmethod
+    def format_minutes(total: int) -> str:
+        hours, minutes = divmod(abs(total), 60)
+        return f"{'-' if total < 0 else ''}{hours:02d}:{minutes:02d}"
+
+    @staticmethod
     def add_times(time1: str, time2: str) -> str:
-        try:
-            negative1 = time1.startswith("-")
-            negative2 = time2.startswith("-")
-            t1 = time1[1:] if negative1 else time1
-            t2 = time2[1:] if negative2 else time2
-
-            dt1 = datetime.strptime(t1, "%H:%M")
-            dt2 = datetime.strptime(t2, "%H:%M")
-
-            mins1 = dt1.hour * 60 + dt1.minute
-            mins2 = dt2.hour * 60 + dt2.minute
-
-            if negative1: mins1 = -mins1
-            if negative2: mins2 = -mins2
-
-            total = mins1 + mins2
-            hours, minutes = divmod(abs(total), 60)
-            formatted = "{:02d}:{:02d}".format(hours, minutes)
-            return "-" + formatted if total < 0 else formatted
-        except Exception:
-            return "00:00"
+        return TimeUtils.format_minutes(TimeUtils.to_minutes(time1) + TimeUtils.to_minutes(time2))
 
     @staticmethod
     def subtract_times(time1: str, time2: str) -> str:
-        try:
-            negative1 = time1.startswith("-")
-            negative2 = time2.startswith("-")
-            t1 = time1[1:] if negative1 else time1
-            t2 = time2[1:] if negative2 else time2
-
-            dt1 = datetime.strptime(t1, "%H:%M")
-            dt2 = datetime.strptime(t2, "%H:%M")
-
-            mins1 = dt1.hour * 60 + dt1.minute
-            mins2 = dt2.hour * 60 + dt2.minute
-
-            if negative1: mins1 = -mins1
-            if negative2: mins2 = -mins2
-
-            total = mins1 - mins2
-            hours, minutes = divmod(abs(total), 60)
-            formatted = "{:02d}:{:02d}".format(hours, minutes)
-            return "-" + formatted if total < 0 else formatted
-        except Exception:
-            return "00:00"
+        return TimeUtils.format_minutes(TimeUtils.to_minutes(time1) - TimeUtils.to_minutes(time2))
 
     @staticmethod
     def check_minus(input_string: str) -> str:
-        return "✔️" if "-" in input_string or input_string == "00:00" else input_string
+        return "✔️" if TimeUtils.to_minutes(input_string) <= 0 else input_string
 
     @staticmethod
     def set_emoji_font(text: str, emoji: bool = False) -> str:
         style = "font-size: 15px;"
         if emoji:
             style += " font-family: 'notocoloremoji';"
-        return f'<span style="{style}">{text}</span>'
+        return f'<span style="{style}">{escape(text)}</span>'
 
 class DataProcessor:
-    @staticmethod
-    def find_starting_points(response_body: Dict) -> Tuple[int, int, int]:
-        startingpoints = {
-            "gestempelte Wochen-AZ": -1,
-            "Kommen": -1,
-            "Status": -1
-        }
-
-        if "rs" in response_body:
-            for i in range(len(response_body["rs"])):
-                try:
-                    # Deep access with error handling
-                    row = response_body["rs"][i]
-                    if len(row) > 1 and len(row[1]) > 1:
-                        val_container = row[1][1]
-                        if val_container and len(val_container) > 0:
-                            val = val_container[0][4][0][4][0][2].get("value")
-                            if val in startingpoints and startingpoints[val] == -1:
-                                startingpoints[val] = i
-                                if all(v != -1 for v in startingpoints.values()):
-                                    break
-                except (IndexError, KeyError, TypeError):
-                    continue
-
-        return startingpoints["gestempelte Wochen-AZ"], startingpoints["Kommen"], startingpoints["Status"]
-
-    @staticmethod
-    def extract_connections(response_body_str: str) -> Dict[str, Any]:
-        # Fix single quotes and other syntax issues
-        data_fixed = response_body_str.replace("'", '"')
-        data_fixed = re.sub(r'(?<=\{|,)\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'"\1":', data_fixed)
-        data_fixed = data_fixed.replace('\\', '\\\\')
-
-        try:
-            response_body = json.loads(data_fixed)
-        except json.JSONDecodeError:
-            return {}
-
-        key = 0
-        key2 = 2
-        info = {}
-
-        sp_az, sp_kommen, sp_status = DataProcessor.find_starting_points(response_body)
-        
-        try:
-            if sp_status != -1:
-                for value2 in range(1, 6):
-                    if value2 % 2 == 0 or value2 == 1:
-                        k = response_body["rs"][sp_status][1][value2][0][4][0][4][key][2]["value"]
-                        v = response_body["rs"][sp_status][1][value2][0][4][0][4][key2][2]["value"]
-                        info[k] = v
-            
-            if sp_kommen != -1:
-                for value2 in range(1, 4):
-                    if value2 % 2 == 0 or value2 == 1:
-                        k = response_body["rs"][sp_kommen][1][value2][0][4][0][4][key][2]["value"]
-                        v = response_body["rs"][sp_kommen][1][value2][0][4][0][4][key2][2]["value"]
-                        info[k] = v
-            
-            if sp_az != -1:
-                for value2 in range(1, 7):
-                    if not value2 % 2 == 0:
-                        k = response_body["rs"][sp_az][1][value2][0][4][0][4][key][2]["value"]
-                        v = str(response_body["rs"][sp_az][1][value2][0][4][0][4][key2][2]["value"])
-                        if k == "Arbeitszeitkonto":
-                            info[k] = v.replace("\\u200B", "")
-                        else:
-                            info[k] = v
-        except Exception:
-            pass
-
-        return info
-
     @staticmethod
     def format_display_data(data: Dict[str, Any]) -> list:
         def format_line(emoji, text):
             return f"{TimeUtils.set_emoji_font(emoji, True)}{TimeUtils.set_emoji_font(text, False)}"
 
         final_list = []
-        arbeitszeit = data.get("Heutige Anwesenheit", "0:00")
-        pause = data.get("Heutige Pause", "0:00")
-        kommen = data.get("Kommen", "0:00")
-        gehen = data.get("Gehen", "k.A.")
-        ueberstunden = data.get("Arbeitszeitkonto", "0:00")
-        
-        current_time = TimeUtils.add_times(TimeUtils.add_times(arbeitszeit, kommen), pause)
-        
-        # Pause calculations
-        p_dt = datetime.strptime(pause, "%H:%M") if pause != "k.A." else datetime.strptime("0:00", "%H:%M")
-        pause2 = "0:30" if p_dt < datetime.strptime("0:30", "%H:%M") else pause
+        arbeitszeit = data["Heutige Anwesenheit"]
+        pause = data["Heutige Pause"]
+        kommen = data["Kommen"]
+        gehen = data["Gehen"]
+        ueberstunden = data["Arbeitszeitkonto"]
         
         final_list.append(format_line("⏰", arbeitszeit))
         final_list.append(format_line("🍔", pause))
         final_list.append(format_line("👣", kommen))
 
-        if gehen == "k.A.":
+        if gehen == "k.A." and "k.A." not in (kommen, arbeitszeit, pause):
+            current_time = TimeUtils.add_times(TimeUtils.add_times(arbeitszeit, kommen), pause)
+            pause2 = "0:30" if TimeUtils.to_minutes(pause) < 30 else pause
             g1 = TimeUtils.add_times(TimeUtils.add_times(kommen, '6:00'), pause)
             g2 = TimeUtils.add_times(TimeUtils.add_times(kommen, '7:42'), pause2)
             g3 = TimeUtils.add_times(TimeUtils.add_times(kommen, '9:00'), pause2)
@@ -204,26 +97,24 @@ class DataProcessor:
             diff2 = TimeUtils.check_minus(TimeUtils.subtract_times(g2, current_time))
             diff3 = TimeUtils.check_minus(TimeUtils.subtract_times(g3, current_time))
             
-            final_list.append(TimeUtils.set_emoji_font(f"G : {g1}/{g2}/{g3}", False))
+            clocks = [TimeUtils.format_minutes(TimeUtils.to_minutes(g) % 1440) for g in (g1, g2, g3)]
+            final_list.append(TimeUtils.set_emoji_font(f"G : {'/'.join(clocks)}", False))
             final_list.append(TimeUtils.set_emoji_font(f"G in h : {diff1}/{diff2}/{diff3}", False))
-        else:
+        elif gehen != "k.A." and pause != "k.A.":
             now_str = datetime.now().strftime('%H:%M')
-            diff_now = TimeUtils.subtract_times(now_str, gehen)
+            diff_now = TimeUtils.format_minutes((TimeUtils.to_minutes(now_str) - TimeUtils.to_minutes(gehen)) % 1440)
             diff_pause = TimeUtils.add_times(diff_now, pause)
             final_list.append(TimeUtils.set_emoji_font(f"G{gehen}({diff_now}/{diff_pause})", False))
 
         # Overtime calculation
-        az_dt = datetime.strptime(arbeitszeit, '%H:%M')
-        target_dt = datetime.strptime('7:42', '%H:%M')
-        
-        diff_az = TimeUtils.subtract_times(arbeitszeit, '7:42')
-        
-        if az_dt < target_dt:
+        ot_str = ueberstunden
+        if "k.A." not in (arbeitszeit, ueberstunden):
+            diff_az = TimeUtils.subtract_times(arbeitszeit, '7:45')
             ot_calc = TimeUtils.add_times(diff_az, ueberstunden)
-            ot_str = f"{ueberstunden} ({ot_calc})"
-        else:
-            ot_calc = TimeUtils.add_times(diff_az, ueberstunden)
-            ot_str = f"{ot_calc} +{diff_az}"
+            if TimeUtils.to_minutes(diff_az) < 0:
+                ot_str = f"{ueberstunden} ({ot_calc})"
+            else:
+                ot_str = f"{ot_calc} +{diff_az}"
             
         final_list.append(format_line("🌙", ot_str))
         
@@ -244,7 +135,7 @@ class Circle(QWidget):
         painter.drawEllipse(0, 0, self.diameter, self.diameter)
 
     def update_color(self, state):
-        self.color = QColor(Qt.green if state == "Anwesend" else Qt.red)
+        self.color = QColor({"Anwesend": Qt.green, "Abwesend": Qt.red}.get(state, Qt.gray))
         self.update()
 
 class ClockInButton(QWidget):
@@ -311,16 +202,19 @@ class OverlayWindow(QWidget):
         self.label.setText("   |   ".join(text_lines))
         self.adjust_position()
         
-        if status != "Anwesend":
+        if status == "Abwesend":
             self.show_clock_button()
         else:
             self.clock_button.hide()
 
     def set_message(self, message):
+        self.circle.update_color(None)
+        self.clock_button.hide()
         self.label.setText(message)
         self.adjust_position()
 
     def adjust_position(self):
+        self.adjustSize()
         screen = QGuiApplication.primaryScreen()
         if not screen:
             screens = QGuiApplication.screens()
@@ -349,54 +243,23 @@ class OverlayWindow(QWidget):
 class BrowserController(QObject):
     update_ui = pyqtSignal(str, list)
     update_msg = pyqtSignal(str)
-    
-    def __init__(self, debug=False):
+
+    def __init__(self, debug=False, read_only=False):
         super().__init__()
         self.debug = debug
+        self.read_only = read_only
         self.driver = None
         self.running = True
         self.extracted_data = {}
-        self.last_reload = time.time()
-        self.initialized = False
-        self.amstempeln = False
-        self.driver_lock = threading.Lock()
-        self.antidesync_time = time.time()
+        self.last_reload = 0
+        self.antidesync_time = time.monotonic()
         self.loaded = False
+        self.pending_status = None
+        self.driver_lock = threading.Lock()
+        self.stamp_lock = threading.Lock()
 
     def start(self):
-        threading.Thread(target=self._bootstrap, daemon=True).start()
-
-    def _bootstrap(self):
-        self.update_msg.emit("Warte auf Internet...")
-        self._wait_for_internet()
-        
-        self.update_msg.emit("Starte Browser...")
-        self._init_driver()
-        
-        while self.running:
-            self.update_msg.emit("Lade ATOSS...")
-            if self._load_page():
-                threading.Thread(target=self._monitor_network, daemon=True).start()
-                threading.Thread(target=self._watchdog, daemon=True).start()
-                self.update_msg.emit("ATOSS geladen | Warte auf Daten...")
-                break
-            
-            self.update_msg.emit("Fehler beim Laden. Neuer Versuch in 100ms...")
-            time.sleep(0.1)
-
-    def _wait_for_internet(self, timeout=5):
-        hosts = [("8.8.8.8", 53), ("1.1.1.1", 53), ("208.67.222.222", 53), ("google.com", 80)]
-        while self.running:
-            for host, port in hosts:
-                try:
-                    socket.setdefaulttimeout(timeout)
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.connect((host, port))
-                    s.close()
-                    return
-                except OSError:
-                    continue
-            time.sleep(2)
+        threading.Thread(target=self._monitor, daemon=True).start()
 
     def _clean_stale_locks(self, user_data_dir):
         try:
@@ -408,19 +271,6 @@ class BrowserController(QObject):
                 if pid_str.isdigit():
                     pid = int(pid_str)
                     
-                    if psutil.pid_exists(pid):
-                        try:
-                            proc = psutil.Process(pid)
-                            if "chrome" in proc.name().lower() or "chromium" in proc.name().lower():
-                                logger.warning(f"Found orphaned Chrome process {pid}. Killing it.")
-                                proc.kill()
-                                try:
-                                    proc.wait(timeout=3)
-                                except psutil.TimeoutExpired:
-                                    pass
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-
                     if not psutil.pid_exists(pid):
                         logger.info(f"Removing stale lock file: {lock_file} (PID {pid} not found)")
                         os.unlink(lock_file)
@@ -453,8 +303,6 @@ class BrowserController(QObject):
         opts.add_argument("--disable-gpu")
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--ignore-certificate-errors")
-        opts.add_argument("--ignore-ssl-errors")
         
         base_path = os.path.dirname(os.path.abspath(__file__))
         selenium_path = os.path.join(base_path, "selenium")
@@ -462,267 +310,177 @@ class BrowserController(QObject):
         self._clean_stale_locks(selenium_path)
         opts.add_argument(f"--user-data-dir={selenium_path}")
         
-        opts.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+        opts.page_load_strategy = "none"
         if not self.debug:
-            opts.add_argument("--headless")
+            opts.add_argument("--headless=new")
         
-        try:
-            with self.driver_lock:
-                self.driver = webdriver.Chrome(options=opts)
-                self.driver.set_page_load_timeout(30)
-        except Exception as e:
-            logger.error(f"Driver init failed: {e}")
-            traceback.print_exc()
-
-    def _load_page(self):
-        url = 'https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true'
-        with self.driver_lock:
-            if not self.driver: return False
-            return self._robust_get(url)
-
-    def _robust_get(self, url, retries=6):
-        for attempt in range(1, retries + 1):
-            try:
-                self.driver.get(url)
-                
-                # Check for error page content
-                src = self.driver.page_source
-                if "ERR_" in src or "neterror" in src:
-                    raise WebDriverException("Network error page detected")
-
-                # Wait for iframe and its content to load
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.ID, "applicationIframe"))
-                )
-                iframe = self.driver.find_element(By.ID, "applicationIframe")
-                self.driver.switch_to.frame(iframe)
-                try:
-                    WebDriverWait(self.driver, 15).until(
-                        lambda d: d.execute_script("return document.body && document.body.querySelectorAll('*').length > 20")
-                    )
-                finally:
-                    self.driver.switch_to.default_content()
-                
-                return True
-            except Exception as e:
-                logger.warning(f"Load attempt {attempt} failed: {e}")
-                try:
-                    self.driver.switch_to.default_content()
-                except Exception:
-                    pass
-                time.sleep(1)
-        return False
-
-    def _monitor_network(self):
-        interesting_requests = {}
-        
-        while self.running:
-            with self.driver_lock:
-                if not self.driver:
-                    time.sleep(0.5)
-                    continue
-                
-                try:
-                    logs = self.driver.get_log('performance')
-                    for entry in logs:
-                        message = json.loads(entry['message'])['message']
-                        method = message['method']
-                        params = message['params']
-                        
-                        if method == 'Network.responseReceived':
-                            response = params['response']
-                            url = response['url']
-                            if 'zkauA10' in url and response['status'] == 200:
-                                if response.get('mimeType', '').startswith('text/plain'):
-                                    interesting_requests[params['requestId']] = url
-                                    
-                        elif method == 'Network.loadingFinished':
-                            req_id = params['requestId']
-                            if req_id in interesting_requests:
-                                try:
-                                    res = self.driver.execute_cdp_cmd('Network.getResponseBody', {'requestId': req_id})
-                                    body = res['body']
-                                    if res.get('base64Encoded', False):
-                                        import base64
-                                        body = base64.b64decode(body).decode('utf-8')
-                                    
-                                    info = DataProcessor.extract_connections(body)
-                                    if info:
-                                        self.extracted_data.update(info)
-                                        if REQUIRED_DATA_KEYS.issubset(self.extracted_data.keys()):
-                                            formatted = DataProcessor.format_display_data(self.extracted_data)
-                                            self.update_ui.emit(self.extracted_data["Status"], formatted)
-                                            self.loaded = True
-                                            self.antidesync_time = time.time()
-                                            self.initialized = True
-                                except Exception:
-                                    pass
-                                del interesting_requests[req_id]
-                except Exception:
-                    pass
-            time.sleep(0.2)
+        self.driver = webdriver.Chrome(options=opts)
+        self.driver.set_page_load_timeout(30)
 
     def _enter_frame(self):
+        self.driver.switch_to.default_content()
+        self.driver.switch_to.frame(self.driver.find_element(By.ID, "applicationIframe"))
+
+    def _read_data(self):
         try:
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.ID, "applicationIframe"))
-            )
-            iframe = self.driver.find_element(By.TAG_NAME, 'iframe')
-            self.driver.switch_to.frame(iframe)
-            return True
-        except Exception:
-            self._reload_page()
-            return False
+            self._enter_frame()
+            data = self.driver.execute_script("""
+                const data = {};
+                for (const entry of document.querySelectorAll('[data-test="ws-dash-entry"]')) {
+                    const label = entry.querySelector('[data-test="ws-dash-keyfigure-label-value"]');
+                    const value = entry.querySelector('[data-test="ws-dash-keyfigure-value"]');
+                    if (label && value) data[label.textContent.trim()] = value.textContent.trim();
+                }
+                return data;
+            """)
+        finally:
+            self.driver.switch_to.default_content()
+        if not REQUIRED_DATA_KEYS.issubset(data):
+            raise ValueError("ATOSS-Daten fehlen; ggf. mit --debug anmelden")
+        data = {key: data[key].replace("\u200b", "").strip() for key in REQUIRED_DATA_KEYS}
+        for key, value in data.items():
+            if key != "Status" and value != "k.A.":
+                minutes = TimeUtils.to_minutes(value)
+                if key in {"Kommen", "Gehen"} and not 0 <= minutes < 1440:
+                    raise ValueError(f"Invalid clock time: {key}")
+                if key in {"Heutige Anwesenheit", "Heutige Pause"} and minutes < 0:
+                    raise ValueError(f"Invalid duration: {key}")
+        return data
+
+    def _publish_data(self, data):
+        if self.pending_status and data["Status"] != self.pending_status:
+            raise ValueError("Stempelstatus unklar. Bitte in ATOSS prüfen oder nach Prüfung neu starten.")
+        formatted = DataProcessor.format_display_data(data)
+        self.pending_status = None
+        if data != self.extracted_data:
+            self.antidesync_time = time.monotonic()
+        self.extracted_data = data
+        self.loaded = True
+        self.update_ui.emit(data["Status"], formatted)
 
     def _reload_page(self):
         self.loaded = False
-        try:
-            self.update_msg.emit(self.extracted_data.get("Status", "Abwesend") + " ⟳")
-            self.driver.refresh()
-            try:
-                self.driver.switch_to.alert.accept()
-            except NoAlertPresentException:
-                pass
-        except Exception:
-            pass
+        self.extracted_data.clear()
+        self.last_reload = time.monotonic()
+        self.antidesync_time = self.last_reload
+        self.update_msg.emit("Lade ATOSS...")
+        # Always use the entry URL, including after a DNS error or expired SSO session.
+        self.driver.get('https://hoffmann-group.atoss.com/hoffmanngroupprod/html?security.sso=true')
+
+    def _poll(self):
+        if self.driver is None:
+            self.update_msg.emit("Starte Browser...")
+            self._init_driver()
+            self._reload_page()
+        now = time.monotonic()
+        retry_after = 1800 if self.loaded else 30
+        if now - self.last_reload >= retry_after:
+            self._reload_page()
+        data = self._read_data()
+        self._publish_data(data)
+        # ponytail: present time must change every minute; reload after 90s, use a server heartbeat if that cadence changes.
+        if data["Status"] == "Anwesend" and now - self.antidesync_time > 90:
+            logger.info("ATOSS data stopped changing, reloading")
+            self._reload_page()
+
+    def _monitor(self):
+        last_error = None
+        while self.running:
+            with self.driver_lock:
+                if not self.running:
+                    break
+                try:
+                    self._poll()
+                    last_error = None
+                except (NoSuchElementException, StaleElementReferenceException, TimeoutException, ValueError) as exc:
+                    self.loaded = False
+                    message = str(exc).splitlines()[0]
+                    if message != last_error:
+                        logger.warning("Waiting for ATOSS: %s", message)
+                        self.update_msg.emit(message if self.pending_status else "Warte auf ATOSS-Daten / Anmeldung...")
+                        last_error = message
+                except (WebDriverException, HTTPError, OSError) as exc:
+                    self.loaded = False
+                    logger.warning("Browser unavailable: %s", str(exc).splitlines()[0])
+                    self.update_msg.emit("Browser / Verbindung unterbrochen. Neuer Versuch...")
+                    self._quit_driver()
+            time.sleep(2 if self.driver else 5)
+
+    def _clickable(self, locator):
+        return WebDriverWait(self.driver, 10, ignored_exceptions=(StaleElementReferenceException,)).until(
+            lambda driver: next((element for element in driver.find_elements(*locator)
+                                 if element.is_displayed() and element.is_enabled()
+                                 and element.get_attribute("aria-disabled") != "true"), False)
+        )
 
     def stempeln(self, is_break):
-        if self.amstempeln: return
-        self.amstempeln = True
-        
-        action_name = "Pause" if is_break else "Anwesenheitsbeginn"
-        
-        while self.running:
-            if not self.loaded:
-                self.update_msg.emit(f"Warte auf Seite für {action_name}...")
-                while not self.loaded and self.running:
-                    time.sleep(0.2)
-            
-            if not self.running:
-                self.amstempeln = False
-                return
-
+        if self.read_only or not self.running:
+            return
+        if not self.stamp_lock.acquire(blocking=False):
+            return
+        click_attempted = False
+        try:
             with self.driver_lock:
-                if not self.loaded:
-                    continue
-
-                if not self.driver:
-                    self.amstempeln = False
+                if not self.running or not self.loaded or not self.driver:
+                    self.update_msg.emit("ATOSS nicht bereit. Bitte später erneut stempeln.")
                     return
-
-                self.update_msg.emit(f"Versuch {action_name} zu Stempeln")
-
-                if not self._enter_frame():
-                    continue
-
-                try:
-                    # Try to find title elements (submenu) directly first
-                    found_submenu = False
-                    try:
-                        titles = WebDriverWait(self.driver, 2).until(
-                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-                        )
-                        for title in titles:
-                            if title.text.startswith(action_name):
-                                self._perform_click(title, action_name, is_break)
-                                found_submenu = True
-                                break
-                    except TimeoutException:
-                        pass
-
-                    if found_submenu:
-                        self.driver.switch_to.default_content()
-                        self.amstempeln = False
-                        return
-
-                    # Find action items (main menu)
-                    elements = WebDriverWait(self.driver, 5).until(
-                        EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".action-item"))
-                    )
-                    
-                    clicked_action = False
-                    for el in elements:
-                        if "Zeiterfassung (Kommen" in el.text:
-                            el.click()
-                            clicked_action = True
-                            break
-                    
-                    if clicked_action:
-                        # Wait for info buttons
-                        WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_all_elements_located((By.CLASS_NAME, "info-element-button"))
-                        )
-                        
-                        # Find title element
-                        titles = WebDriverWait(self.driver, 10).until(
-                            EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".title-element"))
-                        )
-                        
-                        for title in titles:
-                            if title.text.startswith(action_name):
-                                self._perform_click(title, action_name, is_break)
-                                break
-                                
-                    self.driver.switch_to.default_content()
-                    self.amstempeln = False
+                before = self._read_data()["Status"]
+                expected = "Anwesend" if is_break else "Abwesend"
+                if before != expected:
+                    self.update_msg.emit("Stempeln passt nicht zum aktuellen Status.")
                     return
-
-                except StaleElementReferenceException:
-                    logger.warning("Stale element detected during stempeln, retrying...")
-                    try:
-                        self.driver.switch_to.default_content()
-                    except Exception:
-                        pass
-                    continue
-
-                except Exception as e:
-                    logger.error(f"Stempeln failed: {e}")
-                    self.update_msg.emit("Fehler beim Stempeln")
-                    self.amstempeln = False
+                self._enter_frame()
+                action = "Pause / Anwesenheitsende stempeln" if is_break else "Anwesenheitsbeginn stempeln"
+                locator = (By.XPATH, f"//button[@data-test='ws-info-button'][.//*[@data-test='ws-info-button-title' and normalize-space(.)='{action}']]")
+                if not any(element.is_displayed() for element in self.driver.find_elements(*locator)):
+                    menu = (By.XPATH, "//*[@data-test='ws-frame-block-link'][normalize-space(.)='Zeiterfassung (Kommen & Gehen)']")
+                    self._clickable(menu).click()
+                button = self._clickable(locator)
+                # Re-read attendance after opening the menu; never act on the overlay's cached status.
+                if self._read_data()["Status"] != before:
+                    self.update_msg.emit("Status hat sich geändert. Bitte erneut prüfen.")
                     return
-
-    def _perform_click(self, element, action_name, is_break):
-        current_status = self.extracted_data.get("Status", "Abwesend")
-        is_present = current_status == "Anwesend"
-        
-        if is_present == is_break:
-            element.click()
-            #print("Clicking element")
-            self.update_msg.emit(f"Stempel {action_name} hat geklappt")
-        else:
-            self.update_msg.emit("Du hast versucht gleich zu stempeln bitte mach das nicht")
-            time.sleep(0.5)
-            logger.info(self.extracted_data)
-            if REQUIRED_DATA_KEYS.issubset(self.extracted_data.keys()):
-                formatted = DataProcessor.format_display_data(self.extracted_data)
-                self.update_ui.emit(current_status, formatted)
-
-    def _watchdog(self):
-        while self.running:
-            if self.loaded and time.time() - self.antidesync_time > 65:
-                logger.info("Desync detected, reloading")
+                self._enter_frame()
+                click_attempted = True
                 self.loaded = False
-                with self.driver_lock:
-                    if self.driver:
-                        try:
-                            self.driver.get(self.driver.current_url)
-                        except Exception as e:
-                            logger.error(f"Watchdog reload failed. Browser session closed?: {e}")
-                self.antidesync_time = time.time()
-            time.sleep(1)
+                self.pending_status = "Abwesend" if is_break else "Anwesend"
+                button.click()
+                after = WebDriverWait(self.driver, 15).until(
+                    lambda driver: (data if (data := self._read_data())["Status"] ==
+                                    ("Abwesend" if is_break else "Anwesend") else False)
+                )
+                self._publish_data(after)
+                logger.info("ATOSS confirmed: %s", action)
+        except (WebDriverException, HTTPError, OSError, ValueError) as exc:
+            logger.warning("Stempeln failed: %s", str(exc).splitlines()[0])
+            self.update_msg.emit("Stempelstatus unklar. Bitte in ATOSS prüfen; kein automatischer Neuversuch."
+                                 if click_attempted else "Stempeln fehlgeschlagen. Bitte ATOSS prüfen.")
+        finally:
+            try:
+                if self.driver:
+                    with self.driver_lock:
+                        self.driver.switch_to.default_content()
+            except (WebDriverException, HTTPError, OSError):
+                pass
+            self.stamp_lock.release()
+
+    def _quit_driver(self):
+        if self.driver:
+            try:
+                self.driver.quit()
+            except (WebDriverException, HTTPError, OSError):
+                pass
+            self.driver = None
 
     def close(self):
         self.running = False
         with self.driver_lock:
-            if self.driver:
-                try:
-                    self.driver.quit()
-                except: pass
-                self.driver = None
+            self._quit_driver()
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--read-only', action='store_true', help='Disable all clocking actions and hotkeys')
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
@@ -731,42 +489,23 @@ def main():
     window = OverlayWindow()
     window.show()
     
-    controller = BrowserController(debug=args.debug)
+    controller = BrowserController(debug=args.debug, read_only=args.read_only)
+    window.clock_button.button.setEnabled(not args.read_only)
     
     # Connect signals
     controller.update_ui.connect(window.update_status)
     controller.update_msg.connect(window.set_message)
     window.clock_button.clicked_signal.connect(lambda: threading.Thread(target=controller.stempeln, args=(False,), daemon=True).start())
     
-    # Keyboard listener
-    def setup_keyboard():
-        COMBINATION1 = {keyboard.Key.alt, keyboard.KeyCode.from_char('q'), keyboard.KeyCode.from_char('g')}
-        COMBINATION2 = {keyboard.Key.alt, keyboard.KeyCode.from_char('q'), keyboard.KeyCode.from_char('k')}
-        current_keys = set()
-        last_press = 0
+    listener = None
+    if not args.read_only:
+        from pynput import keyboard
+        listener = keyboard.GlobalHotKeys({
+            '<alt>+q+g': lambda: threading.Thread(target=controller.stempeln, args=(True,), daemon=True).start(),
+            '<alt>+q+k': lambda: threading.Thread(target=controller.stempeln, args=(False,), daemon=True).start(),
+        })
+        listener.start()
 
-        def on_press(key):
-            nonlocal last_press
-            if key in COMBINATION1 or key in COMBINATION2:
-                current_keys.add(key)
-            
-            if time.time() - last_press > 3:
-                if COMBINATION1.issubset(current_keys):
-                    threading.Thread(target=controller.stempeln, args=(True,), daemon=True).start()
-                    last_press = time.time()
-                elif COMBINATION2.issubset(current_keys):
-                    threading.Thread(target=controller.stempeln, args=(False,), daemon=True).start()
-                    last_press = time.time()
-
-        def on_release(key):
-            try: current_keys.remove(key)
-            except KeyError: pass
-
-        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-            listener.join()
-
-    threading.Thread(target=setup_keyboard, daemon=True).start()
-    
     controller.start()
 
     # Timer to allow Ctrl+C to be processed by Python interpreter
@@ -775,6 +514,8 @@ def main():
     timer.start(1000)
     
     def cleanup():
+        if listener:
+            listener.stop()
         controller.close()
         
     app.aboutToQuit.connect(cleanup)

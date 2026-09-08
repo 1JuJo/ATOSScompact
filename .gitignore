@@ -9,3 +9,5 @@ ATOSScompact_Icon_new.ico
 .gitignore
 run_ATOSScompact.sh
 ATOSScompact.log
+.venv/
+.ATOSScompact.lock

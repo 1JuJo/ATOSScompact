@@ -5,16 +5,17 @@ APP_NAME="ATOSScompact"
 DEFAULT_REPO_URL="https://github.com/1JuJo/ATOSScompact.git"
 REPO_URL="${REPO_URL:-$DEFAULT_REPO_URL}"
 REPO_BRANCH="${REPO_BRANCH:-18+}"
-SCRIPT_PATH="$(realpath "$0")"
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 INSTALL_DIR="$(dirname "$SCRIPT_PATH")"
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 DESKTOP_FILE="$AUTOSTART_DIR/${APP_NAME}.desktop"
-SYSTEM_DESKTOP_FILE="/usr/share/applications/${APP_NAME}.desktop"
+SYSTEM_DESKTOP_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/applications/${APP_NAME}.desktop"
 RUNNER_PATH="$INSTALL_DIR/run_${APP_NAME}.sh"
 VENV_PATH="$INSTALL_DIR/.venv"
 APT_UPDATED=0
 SKIP_CLONE=0
 NON_INTERACTIVE=0
+SKIP_LAUNCH=0
 
 log() {
     printf '\n[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -34,8 +35,9 @@ Usage: ./installer.sh [options]
 Options:
   --skip-clone           Reuse the existing checkout without pulling/cloning
   --repo-url <url>       Override the Git repository to deploy (default: $DEFAULT_REPO_URL)
-  --branch <name>        Branch to checkout (default: main)
+  --branch <name>        Branch to checkout (default: $REPO_BRANCH)
   --non-interactive      Do not prompt, assume yes for package installs
+  --skip-launch          Install without starting the app
   -h, --help             Show this help and exit
 EOF
 }
@@ -47,18 +49,20 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --repo-url)
+            [[ $# -ge 2 && -n $2 && $2 != --* ]] || die "--repo-url requires a URL"
             shift
-            REPO_URL="${1:-$REPO_URL}"
-            shift || true
+            REPO_URL="$1"
+            shift
             ;;
         --repo-url=*)
             REPO_URL="${1#*=}"
             shift
             ;;
         --branch)
+            [[ $# -ge 2 && -n $2 && $2 != --* ]] || die "--branch requires a name"
             shift
-            REPO_BRANCH="${1:-$REPO_BRANCH}"
-            shift || true
+            REPO_BRANCH="$1"
+            shift
             ;;
         --branch=*)
             REPO_BRANCH="${1#*=}"
@@ -66,6 +70,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --non-interactive)
             NON_INTERACTIVE=1
+            SKIP_LAUNCH=1
+            shift
+            ;;
+        --skip-launch)
+            SKIP_LAUNCH=1
             shift
             ;;
         -h|--help)
@@ -77,6 +86,7 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+[[ -n $REPO_URL && -n $REPO_BRANCH ]] || die "Repository URL and branch cannot be empty"
 
 ensure_command() {
     command -v "$1" >/dev/null 2>&1
@@ -172,28 +182,10 @@ install_packages() {
     run_root apt-get install "${opts[@]}" "${packages[@]}"
 }
 
-filter_requirements_file() {
-    local src="$1"
-    local pattern='file:///build'
-    if [[ ! -f $src ]]; then
-        printf '%s' "$src"
-        return
-    fi
-    if ! grep -q "$pattern" "$src"; then
-        printf '%s' "$src"
-        return
-    fi
-    local tmp
-    tmp=$(mktemp)
-    log "Filtering entries that reference local build paths (file:///build) from requirements.txt" >&2
-    awk '!/file:\/\/\/build/' "$src" > "$tmp"
-    printf '%s' "$tmp"
-}
-
 install_google_chrome() {
-    if ensure_command google-chrome; then
-        return
-    fi
+    for browser in google-chrome google-chrome-stable chromium chromium-browser; do
+        if ensure_command "$browser"; then return; fi
+    done
     log "Installing Google Chrome"
     local tmp_dir
     tmp_dir=$(mktemp -d)
@@ -212,13 +204,13 @@ clone_or_sync_repo() {
         return
     fi
 
-    if [[ -d "$INSTALL_DIR/.git" ]]; then
+    if [[ -e "$INSTALL_DIR/.git" ]]; then
+        git -C "$INSTALL_DIR" diff --quiet && git -C "$INSTALL_DIR" diff --cached --quiet ||
+            die "Local changes found. Use --skip-clone to install this checkout."
         log "Updating existing repository in $INSTALL_DIR"
-        git -C "$INSTALL_DIR" fetch --all --prune
+        git -C "$INSTALL_DIR" fetch origin "$REPO_BRANCH"
         git -C "$INSTALL_DIR" checkout "$REPO_BRANCH"
-        if ! git -C "$INSTALL_DIR" pull --rebase --autostash origin "$REPO_BRANCH"; then
-            log "Warning: git pull failed. Please resolve manually."
-        fi
+        git -C "$INSTALL_DIR" merge --ff-only FETCH_HEAD
         return
     fi
 
@@ -232,21 +224,11 @@ clone_or_sync_repo() {
 
 setup_python_env() {
     log "Setting up Python virtual environment"
-    if [[ ! -d "$VENV_PATH" ]]; then
+    if [[ ! -x "$VENV_PATH/bin/python3" ]]; then
         python3 -m venv "$VENV_PATH"
     fi
-    "$VENV_PATH/bin/pip" install --upgrade pip wheel setuptools
-    if [[ -f "$INSTALL_DIR/requirements.txt" ]]; then
-        local req_file="$INSTALL_DIR/requirements.txt"
-        local filtered_req
-        filtered_req=$(filter_requirements_file "$req_file")
-        "$VENV_PATH/bin/pip" install -r "$filtered_req"
-        if [[ "$filtered_req" != "$req_file" ]]; then
-            rm -f "$filtered_req"
-        fi
-    else
-        log "requirements.txt not found; skipping pip install"
-    fi
+    "$VENV_PATH/bin/python3" -m pip install --upgrade pip wheel setuptools
+    "$VENV_PATH/bin/python3" -m pip install -r "$INSTALL_DIR/requirements.txt"
 }
 
 choose_icon() {
@@ -274,20 +256,28 @@ VENV="$APP_DIR/.venv"
 PYTHON="$VENV/bin/python3"
 LOG_FILE="$APP_DIR/ATOSScompact.log"
 
+exec 9>"$APP_DIR/.ATOSScompact.lock"
+if ! flock -n 9; then
+    echo "ATOSScompact is already running."
+    exit 0
+fi
+
 touch "$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 printf '\n[%s] Starting ATOSScompact...\n' "$(date '+%Y-%m-%d %H:%M:%S')"
-
-if command -v git >/dev/null 2>&1 && [[ -d "$APP_DIR/.git" ]]; then
-    if ! git -C "$APP_DIR" pull --rebase --autostash; then
-        echo "[WARN] git pull failed. Please resolve manually." >&2
-    fi
-fi
 
 if [[ ! -x "$PYTHON" ]]; then
     echo "[ERROR] Python virtualenv missing. Please rerun installer.sh." >&2
     exit 1
 fi
+
+if command -v git >/dev/null 2>&1 && [[ -e "$APP_DIR/.git" ]]; then
+    if ! GIT_TERMINAL_PROMPT=0 timeout 30s git -C "$APP_DIR" pull --ff-only; then
+        echo "[WARN] Git auto-update failed; using the local checkout." >&2
+    fi
+fi
+
+"$PYTHON" -m pip install --disable-pip-version-check -r "$APP_DIR/requirements.txt"
 
 cd "$APP_DIR"
 exec "$PYTHON" "ATOSScompact.py" "$@"
@@ -296,7 +286,7 @@ EOF
 }
 
 install_system_desktop_entry() {
-    log "Installing system-wide desktop entry at $SYSTEM_DESKTOP_FILE"
+    log "Installing desktop entry at $SYSTEM_DESKTOP_FILE"
     local icon_path
     icon_path="$(choose_icon)"
     
@@ -306,18 +296,19 @@ install_system_desktop_entry() {
     cat > "$tmp_file" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "'${RUNNER_PATH}'; exec bash"
+Exec=gnome-terminal --title=${APP_NAME} --class=${APP_NAME} -- "${RUNNER_PATH}"
 Icon=${icon_path}
 Hidden=false
 NoDisplay=false
 Name=${APP_NAME}
 Comment=Run ${APP_NAME}
 StartupWMClass=${APP_NAME}
-Categories=Utility;Application;
+Categories=Utility;
 EOF
 
-    run_root mv "$tmp_file" "$SYSTEM_DESKTOP_FILE"
-    run_root chmod 644 "$SYSTEM_DESKTOP_FILE"
+    mkdir -p "$(dirname "$SYSTEM_DESKTOP_FILE")"
+    mv "$tmp_file" "$SYSTEM_DESKTOP_FILE"
+    chmod 644 "$SYSTEM_DESKTOP_FILE"
 }
 
 configure_autostart() {
@@ -328,7 +319,7 @@ configure_autostart() {
     cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
-Exec=gnome-terminal --title="${APP_NAME}" --class=${APP_NAME} -- bash -c "'${RUNNER_PATH}'; exec bash"
+Exec=gnome-terminal --title=${APP_NAME} --class=${APP_NAME} -- "${RUNNER_PATH}"
 Icon=${icon_path}
 Hidden=false
 NoDisplay=false
@@ -340,12 +331,13 @@ EOF
 }
 
 launch_initial_debug_run() {
+    if [[ $SKIP_LAUNCH -eq 1 ]]; then return; fi
     if [[ ! -x "$RUNNER_PATH" ]]; then
         log "Warning: Runner script not executable; skipping initial debug launch."
         return
     fi
     log "Launching ${APP_NAME} once in debug mode (Ctrl+C to stop; logs: $INSTALL_DIR/ATOSScompact.log)"
-    "$RUNNER_PATH" --debug
+    "$RUNNER_PATH" --debug --read-only
 }
 
 main() {
@@ -363,4 +355,4 @@ main() {
     log "${APP_NAME} installation complete."
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then main "$@"; fi
